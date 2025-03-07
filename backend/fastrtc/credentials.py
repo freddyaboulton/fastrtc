@@ -9,7 +9,7 @@ def get_hf_turn_credentials(token=None):
         token = os.getenv("HF_TOKEN")
     credentials = requests.get(
         "https://fastrtc-turn-server-login.hf.space/credentials",
-        headers={"X-HF-Access-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
     if not credentials.status_code == 200:
         raise ValueError("Failed to get credentials from HF turn server")
@@ -21,6 +21,31 @@ def get_hf_turn_credentials(token=None):
             },
         ]
     }
+
+
+def get_cloudflare_turn_credentials(
+    turn_key_id=None, turn_key_api_token=None, hf_token=None, ttl=600
+):
+    if hf_token is None:
+        return requests.get(
+            "http://127.0.0.1:8000/credentials",
+            headers={"Authorization": f"Bearer {hf_token}"},
+        ).json()
+    else:
+        response = requests.post(
+            f"https://rtc.live.cloudflare.com/v1/turn/keys/{turn_key_id}/credentials/generate-ice-servers",
+            headers={
+                "Authorization": f"Bearer {turn_key_api_token}",
+                "Content-Type": "application/json",
+            },
+            json={"ttl": ttl},
+        )
+        if response.ok:
+            return response.json()
+        else:
+            raise Exception(
+                f"Failed to get TURN credentials: {response.status_code} {response.text}"
+            )
 
 
 def get_twilio_turn_credentials(twilio_sid=None, twilio_token=None):
