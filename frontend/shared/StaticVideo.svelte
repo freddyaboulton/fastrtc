@@ -29,6 +29,14 @@
 
 	$: if (value === "start_webrtc_stream") {
 		_webrtc_id = Math.random().toString(36).substring(2);
+		server
+			.turn()
+			.then((rtc_configuration_) => {
+				rtc_configuration = rtc_configuration_;
+			})
+			.catch((error) => {
+				dispatch("error", error);
+			});
 		value = _webrtc_id;
 		pc = new RTCPeerConnection(rtc_configuration);
 		pc.addEventListener("connectionstatechange", async (event) => {

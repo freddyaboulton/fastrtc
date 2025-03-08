@@ -68,6 +68,7 @@
 
     export let server: {
         offer: (body: any) => Promise<any>;
+        turn: () => Promise<any>;
     };
 
     let stream_state: "open" | "closed" | "waiting" = "closed";
@@ -142,7 +143,17 @@
         }
         _webrtc_id = Math.random().toString(36).substring(2);
         value = _webrtc_id;
+        stream_state = "waiting";
+        await server.turn().then((rtc_configuration_) => {
+            if (rtc_configuration_.error) {
+                dispatch("error", rtc_configuration_.error);
+                return;
+            }
+            rtc_configuration = rtc_configuration_;
+            console.info("rtc_configuration", rtc_configuration_);
+        });
         pc = new RTCPeerConnection(rtc_configuration);
+        console.info("created");
         pc.addEventListener("connectionstatechange", async (event) => {
             switch (pc.connectionState) {
                 case "connected":
@@ -167,7 +178,6 @@
                     break;
             }
         });
-        stream_state = "waiting";
         stream = null;
 
         try {

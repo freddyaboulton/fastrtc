@@ -23,15 +23,24 @@ def get_hf_turn_credentials(token=None):
     }
 
 
-def get_cloudflare_turn_credentials(
+def get_cloudflare_turn_credentials_sync(
     turn_key_id=None, turn_key_api_token=None, hf_token=None, ttl=600
 ):
     if hf_token is None:
+        hf_token = os.getenv("HF_TOKEN")
+    if hf_token is not None:
         return requests.get(
-            "http://127.0.0.1:8000/credentials",
+            "https://turn.fastrtc.org/credentials",
             headers={"Authorization": f"Bearer {hf_token}"},
         ).json()
     else:
+        if turn_key_id is None or turn_key_api_token is None:
+            turn_key_id = os.getenv("CLOUDFLARE_TURN_KEY_ID")
+            turn_key_api_token = os.getenv("CLOUDFLARE_TURN_KEY_API_TOKEN")
+        if turn_key_id is None or turn_key_api_token is None:
+            raise ValueError(
+                "HF_TOKEN or CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_KEY_API_TOKEN must be set to use get_cloudflare_turn_credentials_sync"
+            )
         response = requests.post(
             f"https://rtc.live.cloudflare.com/v1/turn/keys/{turn_key_id}/credentials/generate-ice-servers",
             headers={
@@ -46,6 +55,45 @@ def get_cloudflare_turn_credentials(
             raise Exception(
                 f"Failed to get TURN credentials: {response.status_code} {response.text}"
             )
+
+
+async def get_cloudflare_turn_credentials(
+    turn_key_id=None, turn_key_api_token=None, hf_token=None, ttl=600
+):
+    import httpx
+
+    if hf_token is None:
+        hf_token = os.getenv("HF_TOKEN", "").strip()
+    if hf_token is not None:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://turn.fastrtc.org/credentials",
+                headers={"Authorization": f"Bearer {hf_token}"},
+            )
+            return {**response.json(), "iceTransportPolicy": "relay"}
+    else:
+        if turn_key_id is None or turn_key_api_token is None:
+            turn_key_id = os.getenv("CLOUDFLARE_TURN_KEY_ID")
+            turn_key_api_token = os.getenv("CLOUDFLARE_TURN_KEY_API_TOKEN")
+        if turn_key_id is None or turn_key_api_token is None:
+            raise ValueError(
+                "HF_TOKEN or CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_KEY_API_TOKEN must be set to use get_cloudflare_turn_credentials"
+            )
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://rtc.live.cloudflare.com/v1/turn/keys/{turn_key_id}/credentials/generate-ice-servers",
+                headers={
+                    "Authorization": f"Bearer {turn_key_api_token}",
+                    "Content-Type": "application/json",
+                },
+                json={"ttl": ttl},
+            )
+            if response.status_code == 200:
+                return {**response.json(), "iceTransportPolicy": "relay"}
+            else:
+                raise Exception(
+                    f"Failed to get TURN credentials: {response.status_code} {response.text}"
+                )
 
 
 def get_twilio_turn_credentials(twilio_sid=None, twilio_token=None):

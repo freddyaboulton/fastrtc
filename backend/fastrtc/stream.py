@@ -1,3 +1,4 @@
+import inspect
 import logging
 from pathlib import Path
 from typing import (
@@ -9,6 +10,7 @@ from typing import (
     cast,
 )
 
+import anyio
 import gradio as gr
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse
@@ -59,7 +61,7 @@ class Stream(WebRTCConnectionMixin):
         concurrency_limit: int | None | Literal["default"] = "default",
         time_limit: float | None = None,
         rtp_params: dict[str, Any] | None = None,
-        rtc_configuration: dict[str, Any] | None = None,
+        rtc_configuration: dict[str, Any] | None | Callable[[], dict[str, Any]] = None,
         additional_inputs: list[Component] | None = None,
         additional_outputs: list[Component] | None = None,
         ui_args: UIArgs | None = None,
@@ -86,6 +88,7 @@ class Stream(WebRTCConnectionMixin):
         app.router.websocket("/telephone/handler")(self.telephone_handler)
         app.router.post("/telephone/incoming")(self.handle_incoming_call)
         app.router.websocket("/websocket/offer")(self.websocket_offer)
+        app.router.get("/webrtc/turn")(self.get_rtc_configuration)
         lifespan = self._inject_startup_message(app.router.lifespan_context)
         app.router.lifespan_context = lifespan
 
@@ -552,6 +555,15 @@ class Stream(WebRTCConnectionMixin):
         return await self.handle_offer(
             body.model_dump(), set_outputs=self.set_additional_outputs(body.webrtc_id)
         )
+
+    async def get_rtc_configuration(self):
+        if inspect.isfunction(self.rtc_configuration):
+            if inspect.iscoroutinefunction(self.rtc_configuration):
+                return await self.rtc_configuration()
+            else:
+                return anyio.to_thread.run_sync(self.rtc_configuration)  # type: ignore
+        else:
+            return self.rtc_configuration
 
     async def handle_incoming_call(self, request: Request):
         from twilio.twiml.voice_response import Connect, VoiceResponse
