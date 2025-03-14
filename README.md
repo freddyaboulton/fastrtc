@@ -315,3 +315,7 @@ async def _():
 
 # uvicorn app:app --host 0.0.0.0 --port 8000
 ```
+
+# Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=freddyaboulton/fastrtc&type=Date)](https://star-history.com/#freddyaboulton/fastrtc&Date)
