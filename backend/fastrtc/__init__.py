@@ -11,7 +11,7 @@ from .pause_detection import (
 )
 from .reply_on_pause import AlgoOptions, ReplyOnPause
 from .reply_on_stopwords import ReplyOnStopWords
-from .speech_to_text import MoonshineSTT, get_stt_model
+from .speech_to_text import MoonshineSTT, get_stt_model, list_stt_models
 from .stream import Stream, UIArgs
 from .text_to_speech import KokoroTTSOptions, get_tts_model
 from .tracks import (
@@ -60,6 +60,7 @@ __all__ = [
     "SileroVadOptions",
     "get_stt_model",
     "MoonshineSTT",
+    "list_stt_models",
     "StreamHandler",
     "Stream",
     "VideoEmitType",

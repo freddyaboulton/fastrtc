@@ -74,6 +74,7 @@ vad = ["onnxruntime>=1.20.1"]
 tts = ["kokoro-onnx"]
 stopword = ["fastrtc-moonshine-onnx", "onnxruntime>=1.20.1"]
 stt = ["fastrtc-moonshine-onnx", "onnxruntime>=1.20.1"]
+stt-canary = ["nemo_toolkit[asr]"]
 
 [tool.hatch.build]
 artifacts = ["/backend/fastrtc/templates", "*.pyi"]
