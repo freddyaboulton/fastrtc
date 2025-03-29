@@ -74,7 +74,7 @@ class ReplyOnPause(StreamHandler):
         can_interrupt: bool = True,
         expected_layout: Literal["mono", "stereo"] = "mono",
         output_sample_rate: int = 24000,
-        output_frame_size: int = 480,
+        output_frame_size: int | None = None,  # Deprecated
         input_sample_rate: int = 48000,
         model: PauseDetectionModel | None = None,
     ):
@@ -86,8 +86,6 @@ class ReplyOnPause(StreamHandler):
         )
         self.can_interrupt = can_interrupt
         self.expected_layout: Literal["mono", "stereo"] = expected_layout
-        self.output_sample_rate = output_sample_rate
-        self.output_frame_size = output_frame_size
         self.model = model or get_silero_model()
         self.fn = fn
         self.is_async = inspect.isasyncgenfunction(fn)

@@ -42,7 +42,6 @@ class GeminiHandler(AsyncStreamHandler):
         super().__init__(
             expected_layout="mono",
             output_sample_rate=24000,
-            output_frame_size=480,
             input_sample_rate=24000,
         )
         self.input_queue: asyncio.Queue = asyncio.Queue()

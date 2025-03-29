@@ -38,7 +38,6 @@ class AzureAudioHandler(AsyncStreamHandler):
         super().__init__(
             expected_layout="mono",
             output_sample_rate=SAMPLE_RATE,
-            output_frame_size=480,
             input_sample_rate=SAMPLE_RATE,
         )
         self.ws = None

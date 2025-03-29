@@ -44,7 +44,6 @@ class GeminiHandler(AsyncAudioVideoStreamHandler):
         super().__init__(
             "mono",
             output_sample_rate=24000,
-            output_frame_size=480,
             input_sample_rate=16000,
         )
         self.audio_queue = asyncio.Queue()

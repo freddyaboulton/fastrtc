@@ -39,7 +39,7 @@ class ReplyOnStopWords(ReplyOnPause):
         can_interrupt: bool = True,
         expected_layout: Literal["mono", "stereo"] = "mono",
         output_sample_rate: int = 24000,
-        output_frame_size: int = 480,
+        output_frame_size: int | None = None,  # Deprecated
         input_sample_rate: int = 48000,
         model: PauseDetectionModel | None = None,
     ):

@@ -10,6 +10,7 @@ import logging
 import threading
 import time
 import traceback
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -239,13 +240,12 @@ class StreamHandlerBase(ABC):
         self,
         expected_layout: Literal["mono", "stereo"] = "mono",
         output_sample_rate: int = 24000,
-        output_frame_size: int = 960,
+        output_frame_size: int | None = None,
         input_sample_rate: int = 48000,
         fps: int = 30,
     ) -> None:
         self.expected_layout = expected_layout
         self.output_sample_rate = output_sample_rate
-        self.output_frame_size = output_frame_size
         self.input_sample_rate = input_sample_rate
         self.fps = fps
         self.latest_args: list[Any] = []
@@ -256,6 +256,30 @@ class StreamHandlerBase(ABC):
         self.channel_set = asyncio.Event()
         self._phone_mode = False
         self._clear_queue: Callable | None = None
+
+        sample_rate_to_frame_size_coef = 50
+        if output_sample_rate % sample_rate_to_frame_size_coef != 0:
+            raise ValueError(
+                "output_sample_rate must be a multiple of "
+                f"{sample_rate_to_frame_size_coef}, got {output_sample_rate}"
+            )
+
+        actual_output_frame_size = output_sample_rate // sample_rate_to_frame_size_coef
+        if (
+            output_frame_size is not None
+            and output_frame_size != actual_output_frame_size
+        ):
+            warnings.warn(
+                "The output_frame_size parameter is deprecated and will be removed "
+                "in a future release. The value passed in will be ignored. "
+                f"The actual output frame size is {actual_output_frame_size}, "
+                f"corresponding to {1 / sample_rate_to_frame_size_coef:.2f}s "
+                f"at {output_sample_rate=}Hz.",
+                # DeprecationWarning is filtered out by default, so use UserWarning
+                UserWarning,
+                stacklevel=2,  # So that the warning points to the user's code
+            )
+        self.output_frame_size = actual_output_frame_size
 
     @property
     def clear_queue(self) -> Callable:

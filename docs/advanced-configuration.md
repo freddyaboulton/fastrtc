@@ -92,26 +92,18 @@ stream = Stream(
 
 ## Stream Handler Output Audio
 
-You can configure the output audio chunk size of `ReplyOnPause` (and any `StreamHandler`) 
-with the `output_sample_rate` and `output_frame_size` parameters.
-
-The following code (which uses the default values of these parameters), states that each output chunk will be a frame of 960 samples at a frame rate of `24,000` hz. So it will correspond to `0.04` seconds.
+You can configure the output sampling rate of `ReplyOnPause` (and any `StreamHandler`) 
+with the `output_sample_rate` and parameter. For example:
 
 ```python
 from fastrtc import ReplyOnPause, Stream
 
 stream = Stream(
-    handler=ReplyOnPause(..., output_sample_rate=24000, output_frame_size=960),
+    handler=ReplyOnPause(..., output_sample_rate=16000),
     modality="audio",
     mode="send-receive"
 )
 ```
-
-!!! tip
-
-    In general it is best to leave these settings untouched. In some cases,
-    lowering the output_frame_size can yield smoother audio playback.
-
 
 ## Audio Icon
 

@@ -43,12 +43,10 @@ class GeminiHandler(AsyncStreamHandler):
         self,
         expected_layout: Literal["mono"] = "mono",
         output_sample_rate: int = 24000,
-        output_frame_size: int = 480,
     ) -> None:
         super().__init__(
             expected_layout,
             output_sample_rate,
-            output_frame_size,
             input_sample_rate=16000,
         )
         self.input_queue: asyncio.Queue = asyncio.Queue()
@@ -59,7 +57,6 @@ class GeminiHandler(AsyncStreamHandler):
         return GeminiHandler(
             expected_layout="mono",
             output_sample_rate=self.output_sample_rate,
-            output_frame_size=self.output_frame_size,
         )
 
     async def start_up(self):
