@@ -15,6 +15,5 @@ demo/scratch
 .gradio
 .vscode
 .DS_Store
-test/
 .venv*
 .env

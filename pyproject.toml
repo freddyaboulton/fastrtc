@@ -70,7 +70,7 @@ issues = "https://github.com/freddyaboulton/gradio-webrtc/issues"
 Documentation = "https://freddyaboulton.github.io/gradio-webrtc/cookbook/"
 
 [project.optional-dependencies]
-dev = ["build", "twine"]
+dev = ["build", "twine", "httpx", "pytest"]
 vad = ["onnxruntime>=1.20.1"]
 tts = ["kokoro-onnx"]
 stopword = ["fastrtc-moonshine-onnx", "onnxruntime>=1.20.1"]
@@ -82,8 +82,12 @@ artifacts = ["/backend/fastrtc/templates", "*.pyi"]
 [tool.hatch.build.targets.wheel]
 packages = ["/backend/fastrtc"]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope="function"
+
 [tool.ruff]
-src = ["demo", "backend/fastrtc"]
+src = ["demo", "backend/fastrtc", "test"]
 target-version = "py310"
 extend-exclude = ["demo/phonic_chat", "demo/nextjs_voice_chat"]
 
