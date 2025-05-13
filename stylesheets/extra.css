@@ -1,0 +1,63 @@
+:root {
+    --white: #ffffff;
+    --galaxy: #393931;
+    --space: #2d2d2a;
+    --rock: #2d2d2a;
+    --cosmic: #ffdd00c5;
+    --radiate: #d6cec0;
+    --sun: #ffac2f;
+    --neutron: #F7F5F6;
+    --supernova: #ffdd00;
+    --asteroid: #d6cec0;
+}
+
+[data-md-color-scheme="fastrtc-dark"] {
+    --md-default-bg-color: var(--galaxy);
+    --md-default-fg-color: var(--white);
+    --md-default-fg-color--light: var(--white);
+    --md-default-fg-color--lighter: var(--white);
+    --md-primary-fg-color: var(--space);
+    --md-primary-bg-color: var(--white);
+    --md-accent-fg-color: var(--sun);
+
+    --md-typeset-color: var(--white);
+    --md-typeset-a-color: var(--supernova);
+    --md-typeset-mark-color: var(--sun);
+
+    --md-code-fg-color: var(--white);
+    --md-code-bg-color: var(--rock);
+
+    --md-code-hl-comment-color: var(--asteroid);
+    --md-code-hl-punctuation-color: var(--supernova);
+    --md-code-hl-generic-color: var(--supernova);
+    --md-code-hl-variable-color: var(--white);
+    --md-code-hl-string-color: var(--radiate);
+    --md-code-hl-keyword-color: var(--supernova);
+    --md-code-hl-operator-color: var(--supernova);
+    --md-code-hl-number-color: var(--radiate);
+    --md-code-hl-special-color: var(--supernova);
+    --md-code-hl-function-color: var(--neutron);
+    --md-code-hl-constant-color: var(--radiate);
+    --md-code-hl-name-color: var(--md-code-fg-color);
+
+    --md-typeset-del-color: hsla(6, 90%, 60%, 0.15);
+    --md-typeset-ins-color: hsla(150, 90%, 44%, 0.15);
+
+    --md-typeset-table-color: hsla(0, 0%, 100%, 0.12);
+    --md-typeset-table-color--light: hsla(0, 0%, 100%, 0.035);
+}
+
+[data-md-color-scheme="fastrtc-dark"] div.admonition {
+    color: var(--md-code-fg-color);
+    background-color: var(--galaxy);
+}
+
+
+[data-md-color-scheme="fastrtc-dark"] .grid.cards>ul>li {
+    border-color: var(--rock);
+    border-width: thick;
+}
+
+[data-md-color-scheme="fastrtc-dark"] .grid.cards>ul>li>hr {
+    border-color: var(--rock);
+}

@@ -1,0 +1,3343 @@
+# FastRTC
+
+### The Real-Time Communication Library for Python.
+
+Turn any python function into a real-time audio and video stream over WebRTC or WebSockets.
+
+[](https://github.com/user-attachments/assets/a297aa1e-ff42-448c-a58c-389b0a575d4d)
+
+## Installation
+
+```bash
+pip install fastrtc
+
+```
+
+to use built-in pause detection (see [ReplyOnPause](userguide/audio/#reply-on-pause)), speech-to-text (see [Speech To Text](userguide/audio/#speech-to-text)), and text to speech (see [Text To Speech](userguide/audio/#text-to-speech)), install the `vad`, `stt`, and `tts` extras:
+
+```bash
+pip install "fastrtc[vad, stt, tts]"
+
+```
+
+## Quickstart
+
+Import the [Stream](userguide/streams) class and pass in a [handler](userguide/streams/#handlers). The `Stream` has three main methods:
+
+- `.ui.launch()`: Launch a built-in UI for easily testing and sharing your stream. Built with [Gradio](https://www.gradio.app/).
+- `.fastphone()`: Get a free temporary phone number to call into your stream. Hugging Face token required.
+- `.mount(app)`: Mount the stream on a [FastAPI](https://fastapi.tiangolo.com/) app. Perfect for integrating with your already existing production system.
+
+```python
+from fastrtc import Stream, ReplyOnPause
+import numpy as np
+
+def echo(audio: tuple[int, np.ndarray]):
+    # The function will be passed the audio until the user pauses
+    # Implement any iterator that yields audio
+    # See "LLM Voice Chat" for a more complete example
+    yield audio
+
+stream = Stream(
+    handler=ReplyOnPause(echo),
+    modality="audio", 
+    mode="send-receive",
+)
+
+```
+
+```py
+import os
+
+from fastrtc import (ReplyOnPause, Stream, get_stt_model, get_tts_model)
+from openai import OpenAI
+
+sambanova_client = OpenAI(
+    api_key=os.getenv("SAMBANOVA_API_KEY"), base_url="https://api.sambanova.ai/v1"
+)
+stt_model = get_stt_model()
+tts_model = get_tts_model()
+
+def echo(audio):
+    prompt = stt_model.stt(audio)
+    response = sambanova_client.chat.completions.create(
+        model="Meta-Llama-3.2-3B-Instruct",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=200,
+    )
+    prompt = response.choices[0].message.content
+    for audio_chunk in tts_model.stream_tts_sync(prompt):
+        yield audio_chunk
+
+stream = Stream(ReplyOnPause(echo), modality="audio", mode="send-receive")
+
+```
+
+```python
+from fastrtc import Stream
+import numpy as np
+
+
+def flip_vertically(image):
+    return np.flip(image, axis=0)
+
+
+stream = Stream(
+    handler=flip_vertically,
+    modality="video",
+    mode="send-receive",
+)
+
+```
+
+```python
+from fastrtc import Stream
+import gradio as gr
+import cv2
+from huggingface_hub import hf_hub_download
+from .inference import YOLOv10
+
+model_file = hf_hub_download(
+    repo_id="onnx-community/yolov10n", filename="onnx/model.onnx"
+)
+
+# git clone https://huggingface.co/spaces/fastrtc/object-detection
+# for YOLOv10 implementation
+model = YOLOv10(model_file)
+
+def detection(image, conf_threshold=0.3):
+    image = cv2.resize(image, (model.input_width, model.input_height))
+    new_image = model.detect_objects(image, conf_threshold)
+    return cv2.resize(new_image, (500, 500))
+
+stream = Stream(
+    handler=detection,
+    modality="video", 
+    mode="send-receive",
+    additional_inputs=[
+        gr.Slider(minimum=0, maximum=1, step=0.01, value=0.3)
+    ]
+)
+
+```
+
+Run:
+
+```py
+stream.ui.launch()
+
+```
+
+```py
+stream.fastphone()
+
+```
+
+```py
+app = FastAPI()
+stream.mount(app)
+
+# Optional: Add routes
+@app.get("/")
+async def _():
+    return HTMLResponse(content=open("index.html").read())
+
+# uvicorn app:app --host 0.0.0.0 --port 8000
+
+```
+
+Learn more about the [Stream](userguide/streams) in the user guide.
+
+## Key Features
+
+Automatic UI - Use the `.ui.launch()` method to launch the webRTC-enabled built-in Gradio UI.
+
+Automatic WebRTC Support - Use the `.mount(app)` method to mount the stream on a FastAPI app and get a webRTC endpoint for your own frontend!
+
+Websocket Support - Use the `.mount(app)` method to mount the stream on a FastAPI app and get a websocket endpoint for your own frontend!
+
+## Examples
+
+See the [cookbook](/cookbook).
+
+Follow and join or [organization](https://huggingface.co/fastrtc) on Hugging Face!
+
+# Connecting via API
+
+Before continuing, select the `modality`, `mode` of your `Stream` and whether you're using `WebRTC` or `WebSocket`s.
+
+Connection
+
+WebRTC WebSocket
+
+Modality
+
+Audio Video Audio-Video
+
+Mode
+
+Send-Receive Receive Send
+
+### Sample Code
+
+### Message Format
+
+Over both WebRTC and WebSocket, the server can send messages of the following format:
+
+```json
+{
+    "type": `send_input` | `fetch_output` | `stopword` | `error` | `warning` | `log`,
+    "data": string | object
+}
+
+```
+
+- `send_input`: Send any input data for the handler to the server. See [`Additional Inputs`](#additional-inputs) for more details.
+- `fetch_output`: An instance of [`AdditionalOutputs`](#additional-outputs) is sent to the server.
+- `stopword`: The stopword has been detected. See [`ReplyOnStopWords`](../audio/#reply-on-stopwords) for more details.
+- `error`: An error occurred. The `data` will be a string containing the error message.
+- `warning`: A warning occurred. The `data` will be a string containing the warning message.
+- `log`: A log message. The `data` will be a string containing the log message.
+
+The `ReplyOnPause` handler can also send the following `log` messages.
+
+```json
+{
+    "type": "log",
+    "data": "pause_detected" | "response_starting" | "started_talking"
+}
+
+```
+
+Tip
+
+When using WebRTC, the messages will be encoded as strings, so parse as JSON before using.
+
+### Additional Inputs
+
+When the `send_input` message is received, update the inputs of your handler however you like by using the `set_input` method of the `Stream` object.
+
+A common pattern is to use a `POST` request to send the updated data. The first argument to the `set_input` method is the `webrtc_id` of the handler.
+
+```python
+from pydantic import BaseModel, Field
+
+class InputData(BaseModel):
+    webrtc_id: str
+    conf_threshold: float = Field(ge=0, le=1)
+
+
+@app.post("/input_hook")
+async def _(data: InputData):
+    stream.set_input(data.webrtc_id, data.conf_threshold)
+
+```
+
+The updated data will be passed to the handler on the **next** call.
+
+### Additional Outputs
+
+The `fetch_output` message is sent to the client whenever an instance of [`AdditionalOutputs`](../streams/#additional-outputs) is available. You can access the latest output data by calling the `fetch_latest_output` method of the `Stream` object.
+
+However, rather than fetching each output manually, a common pattern is to fetch the entire stream of output data by calling the `output_stream` method.
+
+Here is an example:
+
+```python
+from fastapi.responses import StreamingResponse
+
+@app.get("/updates")
+async def stream_updates(webrtc_id: str):
+    async def output_stream():
+        async for output in stream.output_stream(webrtc_id):
+            # Output is the AdditionalOutputs instance
+            # Be sure to serialize it however you would like
+            yield f"data: {output.args[0]}\n\n"
+
+    return StreamingResponse(
+        output_stream(), 
+        media_type="text/event-stream"
+    )
+
+```
+
+### Handling Errors
+
+When connecting via `WebRTC`, the server will respond to the `/webrtc/offer` route with a JSON response. If there are too many connections, the server will respond with a 200 error.
+
+```json
+{
+    "status": "failed",
+    "meta": {
+        "error": "concurrency_limit_reached",
+        "limit": 10
+    }
+
+```
+
+Over `WebSocket`, the server will send the same message before closing the connection.
+
+Tip
+
+The server will sends a 200 status code because otherwise the gradio client will not be able to process the json response and display the error.
+
+# Audio-Video Streaming
+
+You can simultaneously stream audio and video using `AudioVideoStreamHandler` or `AsyncAudioVideoStreamHandler`. They are identical to the audio `StreamHandlers` with the addition of `video_receive` and `video_emit` methods which take and return a `numpy` array, respectively.
+
+Here is an example of the video handling functions for connecting with the Gemini multimodal API. In this case, we simply reflect the webcam feed back to the user but every second we'll send the latest webcam frame (and an additional image component) to the Gemini server.
+
+Please see the "Gemini Audio Video Chat" example in the [cookbook](../../cookbook) for the complete code.
+
+Async Gemini Video Handling
+
+```python
+async def video_receive(self, frame: np.ndarray):
+    """Send video frames to the server"""
+    if self.session:
+        # send image every 1 second
+        # otherwise we flood the API
+        if time.time() - self.last_frame_time > 1:
+            self.last_frame_time = time.time()
+            await self.session.send(encode_image(frame))
+            if self.latest_args[2] is not None:
+                await self.session.send(encode_image(self.latest_args[2]))
+    self.video_queue.put_nowait(frame)
+
+async def video_emit(self) -> VideoEmitType:
+    """Return video frames to the client"""
+    return await self.video_queue.get()
+
+```
+
+## Reply On Pause
+
+Typically, you want to run a python function whenever a user has stopped speaking. This can be done by wrapping a python generator with the `ReplyOnPause` class and passing it to the `handler` argument of the `Stream` object. The `ReplyOnPause` class will handle the voice detection and turn taking logic automatically!
+
+```python
+from fastrtc import ReplyOnPause, Stream
+
+def response(audio: tuple[int, np.ndarray]): # (1)
+    sample_rate, audio_array = audio
+    # Generate response
+    for audio_chunk in generate_response(sample_rate, audio_array):
+        yield (sample_rate, audio_chunk) # (2)
+
+stream = Stream(
+    handler=ReplyOnPause(response),
+    modality="audio",
+    mode="send-receive"
+)
+
+```
+
+1. The python generator will receive the **entire** audio up until the user stopped. It will be a tuple of the form (sampling_rate, numpy array of audio). The array will have a shape of (1, num_samples). You can also pass in additional input components.
+
+1. The generator must yield audio chunks as a tuple of (sampling_rate, numpy audio array). Each numpy audio array must have a shape of (1, num_samples).
+
+1. The python generator will receive the **entire** audio up until the user stopped. It will be a tuple of the form (sampling_rate, numpy array of audio). The array will have a shape of (1, num_samples). You can also pass in additional input components.
+
+1. The generator must yield audio chunks as a tuple of (sampling_rate, numpy audio array). Each numpy audio array must have a shape of (1, num_samples).
+
+Asynchronous
+
+You can also use an async generator with `ReplyOnPause`.
+
+Parameters
+
+You can customize the voice detection parameters by passing in `algo_options` and `model_options` to the `ReplyOnPause` class.
+
+```python
+from fastrtc import AlgoOptions, SileroVadOptions
+
+stream = Stream(
+    handler=ReplyOnPause(
+        response,
+        algo_options=AlgoOptions(
+            audio_chunk_duration=0.6,
+            started_talking_threshold=0.2,
+            speech_threshold=0.1
+        ),
+        model_options=SileroVadOptions(
+            threshold=0.5,
+            min_speech_duration_ms=250,
+            min_silence_duration_ms=100
+        )
+    )
+)
+
+```
+
+### Interruptions
+
+By default, the `ReplyOnPause` handler will allow you to interrupt the response at any time by speaking again. If you do not want to allow interruption, you can set the `can_interrupt` parameter to `False`.
+
+```python
+from fastrtc import Stream, ReplyOnPause
+
+stream = Stream(
+    handler=ReplyOnPause(
+        response,
+        can_interrupt=True,
+    )
+)
+
+```
+
+[](https://github.com/user-attachments/assets/dba68dd7-7444-439b-b948-59171067e850)
+
+Muting Response Audio
+
+You can directly talk over the output audio and the interruption will still work. However, in these cases, the audio transcription may be incorrect. To prevent this, it's best practice to mute the output audio before talking over it.
+
+### Startup Function
+
+You can pass in a `startup_fn` to the `ReplyOnPause` class. This function will be called when the connection is first established. It is helpful for generating intial responses.
+
+```python
+from fastrtc import get_tts_model, Stream, ReplyOnPause
+
+tts_client = get_tts_model()
+
+
+def echo(audio: tuple[int, np.ndarray]):
+    # Implement any iterator that yields audio
+    # See "LLM Voice Chat" for a more complete example
+    yield audio
+
+
+def startup():
+    for chunk in tts_client.stream_tts_sync("Welcome to the echo audio demo!"):
+        yield chunk
+
+
+stream = Stream(
+    handler=ReplyOnPause(echo, startup_fn=startup),
+    modality="audio",
+    mode="send-receive",
+    ui_args={"title": "Echo Audio"},
+)
+
+```
+
+[](https://github.com/user-attachments/assets/c6b1cb51-5790-4522-80c3-e24e58ef9f11)
+
+## Reply On Stopwords
+
+You can configure your AI model to run whenever a set of "stop words" are detected, like "Hey Siri" or "computer", with the `ReplyOnStopWords` class.
+
+The API is similar to `ReplyOnPause` with the addition of a `stop_words` parameter.
+
+```py
+from fastrtc import Stream, ReplyOnStopWords
+
+def response(audio: tuple[int, np.ndarray]):
+    """This function must yield audio frames"""
+    ...
+    for numpy_array in generated_audio:
+        yield (sampling_rate, numpy_array, "mono")
+
+stream = Stream(
+    handler=ReplyOnStopWords(generate,
+                            input_sample_rate=16000,
+                            stop_words=["computer"]), # (1)
+    modality="audio",
+    mode="send-receive"
+)
+
+```
+
+1. The `stop_words` can be single words or pairs of words. Be sure to include common misspellings of your word for more robust detection, e.g. "llama", "lamma". In my experience, it's best to use two very distinct words like "ok computer" or "hello iris".
+
+1. The `stop_words` can be single words or pairs of words. Be sure to include common misspellings of your word for more robust detection, e.g. "llama", "lamma". In my experience, it's best to use two very distinct words like "ok computer" or "hello iris".
+
+Extra Dependencies
+
+The `ReplyOnStopWords` class requires the the `stopword` extra. Run `pip install fastrtc[stopword]` to install it.
+
+English Only
+
+The `ReplyOnStopWords` class is currently only supported for English.
+
+## Stream Handler
+
+`ReplyOnPause` and `ReplyOnStopWords` are implementations of a `StreamHandler`. The `StreamHandler` is a low-level abstraction that gives you arbitrary control over how the input audio stream and output audio stream are created. The following example echos back the user audio.
+
+```py
+import gradio as gr
+from fastrtc import StreamHandler
+from queue import Queue
+
+class EchoHandler(StreamHandler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.queue = Queue()
+
+    def receive(self, frame: tuple[int, np.ndarray]) -> None: # (1)
+        self.queue.put(frame)
+
+    def emit(self) -> None: # (2)
+        return self.queue.get()
+
+    def copy(self) -> StreamHandler:
+        return EchoHandler()
+
+    def shutdown(self) -> None: # (3)
+        pass
+
+    def start_up(self) -> None: # (4)
+        pass
+
+stream = Stream(
+    handler=EchoHandler(),
+    modality="audio",
+    mode="send-receive"
+)
+
+```
+
+1. The `StreamHandler` class implements three methods: `receive`, `emit` and `copy`. The `receive` method is called when a new frame is received from the client, and the `emit` method returns the next frame to send to the client. The `copy` method is called at the beginning of the stream to ensure each user has a unique stream handler.
+
+1. The `emit` method SHOULD NOT block. If a frame is not ready to be sent, the method should return `None`. If you need to wait for a frame, use [`wait_for_item`](../../utils#wait_for_item) from the `utils` module.
+
+1. The `shutdown` method is called when the stream is closed. It should be used to clean up any resources.
+
+1. The `start_up` method is called when the stream is first created. It should be used to initialize any resources. See [Talk To OpenAI](https://huggingface.co/spaces/fastrtc/talk-to-openai-gradio) or [Talk To Gemini](https://huggingface.co/spaces/fastrtc/talk-to-gemini-gradio) for an example of a `StreamHandler` that uses the `start_up` method to connect to an API.
+
+1. The `StreamHandler` class implements three methods: `receive`, `emit` and `copy`. The `receive` method is called when a new frame is received from the client, and the `emit` method returns the next frame to send to the client. The `copy` method is called at the beginning of the stream to ensure each user has a unique stream handler.
+
+1. The `emit` method SHOULD NOT block. If a frame is not ready to be sent, the method should return `None`. If you need to wait for a frame, use [`wait_for_item`](../../utils#wait_for_item) from the `utils` module.
+
+1. The `shutdown` method is called when the stream is closed. It should be used to clean up any resources.
+
+1. The `start_up` method is called when the stream is first created. It should be used to initialize any resources. See [Talk To OpenAI](https://huggingface.co/spaces/fastrtc/talk-to-openai-gradio) or [Talk To Gemini](https://huggingface.co/spaces/fastrtc/talk-to-gemini-gradio) for an example of a `StreamHandler` that uses the `start_up` method to connect to an API.
+
+Tip
+
+See this [Talk To Gemini](https://huggingface.co/spaces/fastrtc/talk-to-gemini-gradio) for a complete example of a more complex stream handler.
+
+Warning
+
+The `emit` method should not block. If you need to wait for a frame, use [`wait_for_item`](../../utils#wait_for_item) from the `utils` module.
+
+## Async Stream Handlers
+
+It is also possible to create asynchronous stream handlers. This is very convenient for accessing async APIs from major LLM developers, like Google and OpenAI. The main difference is that `receive`, `emit`, and `start_up` are now defined with `async def`.
+
+Here is aa simple example of using `AsyncStreamHandler`:
+
+```py
+from fastrtc import AsyncStreamHandler, wait_for_item, Stream
+import asyncio
+import numpy as np
+
+class AsyncEchoHandler(AsyncStreamHandler):
+    """Simple Async Echo Handler"""
+
+    def __init__(self) -> None:
+        super().__init__(input_sample_rate=24000)
+        self.queue = asyncio.Queue()
+
+    async def receive(self, frame: tuple[int, np.ndarray]) -> None:
+        await self.queue.put(frame)
+
+    async def emit(self) -> None:
+        return await wait_for_item(self.queue)
+
+    def copy(self):
+        return AsyncEchoHandler()
+
+    async def shutdown(self):
+        pass
+
+    async def start_up(self) -> None:
+        pass
+
+```
+
+Tip
+
+See [Talk To Gemini](https://huggingface.co/spaces/fastrtc/talk-to-gemini), [Talk To Openai](https://huggingface.co/spaces/fastrtc/talk-to-openai) for complete examples of `AsyncStreamHandler`s.
+
+## Text To Speech
+
+You can use an on-device text to speech model if you have the `tts` extra installed. Import the `get_tts_model` function and call it with the model name you want to use. At the moment, the only model supported is `kokoro`.
+
+The `get_tts_model` function returns an object with three methods:
+
+- `tts`: Synchronous text to speech.
+- `stream_tts_sync`: Synchronous text to speech streaming.
+- `stream_tts`: Asynchronous text to speech streaming.
+
+```python
+from fastrtc import get_tts_model
+
+model = get_tts_model(model="kokoro")
+
+for audio in model.stream_tts_sync("Hello, world!"):
+    yield audio
+
+async for audio in model.stream_tts("Hello, world!"):
+    yield audio
+
+audio = model.tts("Hello, world!")
+
+```
+
+Tip
+
+You can customize the audio by passing in an instace of `KokoroTTSOptions` to the method. See [here](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md) for a list of available voices.
+
+```python
+from fastrtc import KokoroTTSOptions, get_tts_model
+
+model = get_tts_model(model="kokoro")
+
+options = KokoroTTSOptions(
+    voice="af_heart",
+    speed=1.0,
+    lang="en-us"
+)
+
+audio = model.tts("Hello, world!", options=options)
+
+```
+
+## Speech To Text
+
+You can use an on-device speech to text model if you have the `stt` or `stopword` extra installed. Import the `get_stt_model` function and call it with the model name you want to use. At the moment, the only models supported are `moonshine/base` and `moonshine/tiny`.
+
+The `get_stt_model` function returns an object with the following method:
+
+- `stt`: Synchronous speech to text.
+
+```python
+from fastrtc import get_stt_model
+
+model = get_stt_model(model="moonshine/base")
+
+audio = (16000, np.random.randint(-32768, 32768, size=(1, 16000)))
+text = model.stt(audio)
+
+```
+
+Example
+
+See [LLM Voice Chat](https://huggingface.co/spaces/fastrtc/llm-voice-chat) for an example of using the `stt` method in a `ReplyOnPause` handler.
+
+English Only
+
+The `stt` model is currently only supported for English.
+
+## Requesting Inputs
+
+In `ReplyOnPause` and `ReplyOnStopWords`, any additional input data is automatically passed to your generator. For `StreamHandler`s, you must manually request the input data from the client.
+
+You can do this by calling `await self.wait_for_args()` (for `AsyncStreamHandler`s) in either the `emit` or `receive` methods. For a `StreamHandler`, you can call `self.wait_for_args_sync()`.
+
+We can access the value of this component via the `latest_args` property of the `StreamHandler`. The `latest_args` is a list storing each of the values. The 0th index is the dummy string `__webrtc_value__`.
+
+## Considerations for Telephone Use
+
+In order for your handler to work over the phone, you must make sure that your handler is not expecting any additional input data besides the audio.
+
+If you call `await self.wait_for_args()` your stream will wait forever for the additional input data.
+
+The stream handlers have a `phone_mode` property that is set to `True` if the stream is running over the phone. You can use this property to determine if you should wait for additional input data.
+
+```python
+def emit(self):
+    if self.phone_mode:
+        self.latest_args = [None]
+    else:
+        await self.wait_for_args()
+
+```
+
+### `ReplyOnPause` and telephone use
+
+The generator you pass to `ReplyOnPause` must have default arguments for all arguments except audio.
+
+If you yield `AdditionalOutputs`, they will be passed in as the input arguments to the generator the next time it is called.
+
+Tip
+
+See [Talk To Claude](https://huggingface.co/spaces/fastrtc/talk-to-claude) for an example of a `ReplyOnPause` handler that is compatible with telephone usage. Notice how the input chatbot history is yielded as an `AdditionalOutput` on each invocation.
+
+## Telephone Integration
+
+You can integrate a `Stream` with a SIP provider like Twilio to set up your own phone number for your application.
+
+### Setup Process
+
+1. **Create a Twilio Account**: Sign up for a [Twilio](https://login.twilio.com/u/signup) account and purchase a phone number with voice capabilities. With a trial account, only the phone number you used during registration will be able to connect to your `Stream`.
+1. **Mount Your Stream**: Add your `Stream` to a FastAPI app using `stream.mount(app)` and run the server.
+1. **Configure Twilio Webhook**: Point your Twilio phone number to your webhook URL.
+
+### Configuring Twilio
+
+To configure your Twilio phone number:
+
+1. In your Twilio dashboard, navigate to `Manage` → `TwiML Apps` in the left sidebar
+1. Click `Create TwiML App`
+1. Set the `Voice URL` to your FastAPI app's URL with `/telephone/incoming` appended (e.g., `https://your-app-url.com/telephone/incoming`)
+
+Local Development with Ngrok
+
+For local development, use [ngrok](https://ngrok.com/) to expose your local server:
+
+```bash
+ngrok http <port>
+
+```
+
+Then set your Twilio Voice URL to `https://your-ngrok-subdomain.ngrok.io/telephone/incoming-call`
+
+### Code Example
+
+Here's a simple example of setting up a Twilio endpoint:
+
+```py
+from fastrtc import Stream, ReplyOnPause
+from fastapi import FastAPI
+
+def echo(audio):
+    yield audio
+
+app = FastAPI()
+
+stream = Stream(ReplyOnPause(echo), modality="audio", mode="send-receive")
+stream.mount(app)
+
+# run with `uvicorn main:app`
+
+```
+
+### Outbound calls with Twilio
+
+Here's a simple example to call someone using the twilio-python module:
+
+```py
+app = FastAPI()
+
+@app.post("/call")
+async def start_call(req: Request):
+  body = await req.json()
+  from_no = body.get("from")
+  to_no = body.get("to")
+  account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+  auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+  client = Client(account_sid, auth_token)
+
+  # Use the public URL of your application
+  # here we're using ngrok to expose an app
+  # running locally
+  call = client.calls.create(
+    to=to_no,
+    from_=from_no,
+    url="https://[your_ngrok_subdomain].ngrok.app/incoming-call"
+  )
+
+  return {"sid": f"{call.sid}"}
+
+@app.api_route("/incoming-call", methods=["GET", "POST"])
+async def handle_incoming_call(req: Request):
+  from twilio.twiml.voice_response import VoiceResponse, Connect
+  response = VoiceResponse()
+  response.say("Connecting to AI assistant")
+  connect = Connect()
+  connect.stream(url=f'wss://{req.url.hostname}/media-stream')
+  response.append(connect)
+  return HTMLResponse(content=str(response), media_type="application/xml")
+
+@app.websocket("/media-stream")
+async def handle_media_stream(websocket: WebSocket):
+  # stream is a FastRTC stream defined elsewhere
+  await stream.telephone_handler(websocket)
+
+app = gr.mount_gradio_app(app, stream.ui, path="/")
+
+```
+
+# Gradio Component
+
+The automatic gradio UI is a great way to test your stream. However, you may want to customize the UI to your liking or simply build a standalone Gradio application.
+
+## The WebRTC Component
+
+To build a standalone Gradio application, you can use the `WebRTC` component and implement the `stream` event. Similarly to the `Stream` object, you must set the `mode` and `modality` arguments and pass in a `handler`.
+
+In the `stream` event, you pass in your handler as well as the input and output components.
+
+```py
+import gradio as gr
+from fastrtc import WebRTC, ReplyOnPause
+
+def response(audio: tuple[int, np.ndarray]):
+    """This function must yield audio frames"""
+    ...
+    yield audio
+
+
+with gr.Blocks() as demo:
+    gr.HTML(
+    """
+    <h1 style='text-align: center'>
+    Chat (Powered by WebRTC ⚡️)
+    </h1>
+    """
+    )
+    with gr.Column():
+        with gr.Group():
+            audio = WebRTC(
+                mode="send-receive",
+                modality="audio",
+            )
+        audio.stream(fn=ReplyOnPause(response),
+                    inputs=[audio], outputs=[audio],
+                    time_limit=60)
+demo.launch()
+
+```
+
+## Additional Outputs
+
+In order to modify other components from within the WebRTC stream, you must yield an instance of `AdditionalOutputs` and add an `on_additional_outputs` event to the `WebRTC` component.
+
+This is common for displaying a multimodal text/audio conversation in a Chatbot UI.
+
+Additional Outputs
+
+```py
+from fastrtc import AdditionalOutputs, WebRTC
+
+def transcribe(audio: tuple[int, np.ndarray],
+               transformers_convo: list[dict],
+               gradio_convo: list[dict]):
+    response = model.generate(**inputs, max_length=256)
+    transformers_convo.append({"role": "assistant", "content": response})
+    gradio_convo.append({"role": "assistant", "content": response})
+    yield AdditionalOutputs(transformers_convo, gradio_convo) # (1)
+
+
+with gr.Blocks() as demo:
+    gr.HTML(
+    """
+    <h1 style='text-align: center'>
+    Talk to Qwen2Audio (Powered by WebRTC ⚡️)
+    </h1>
+    """
+    )
+    transformers_convo = gr.State(value=[])
+    with gr.Row():
+        with gr.Column():
+            audio = WebRTC(
+                label="Stream",
+                mode="send", # (2)
+                modality="audio",
+            )
+        with gr.Column():
+            transcript = gr.Chatbot(label="transcript", type="messages")
+
+    audio.stream(ReplyOnPause(transcribe),
+                inputs=[audio, transformers_convo, transcript],
+                outputs=[audio], time_limit=90)
+    audio.on_additional_outputs(lambda s,a: (s,a), # (3)
+                                outputs=[transformers_convo, transcript],
+                                queue=False, show_progress="hidden")
+    demo.launch()
+
+```
+
+1. Pass your data to `AdditionalOutputs` and yield it.
+
+1. In this case, no audio is being returned, so we set `mode="send"`. However, if we set `mode="send-receive"`, we could also yield generated audio and `AdditionalOutputs`.
+
+1. The `on_additional_outputs` event does not take `inputs`. It's common practice to not run this event on the queue since it is just a quick UI update.
+
+1. Pass your data to `AdditionalOutputs` and yield it.
+
+1. In this case, no audio is being returned, so we set `mode="send"`. However, if we set `mode="send-receive"`, we could also yield generated audio and `AdditionalOutputs`.
+
+1. The `on_additional_outputs` event does not take `inputs`. It's common practice to not run this event on the queue since it is just a quick UI update.
+
+# Core Concepts
+
+The core of FastRTC is the `Stream` object. It can be used to stream audio, video, or both.
+
+Here's a simple example of creating a video stream that flips the video vertically. We'll use it to explain the core concepts of the `Stream` object. Click on the plus icons to get a link to the relevant section.
+
+```python
+from fastrtc import Stream
+import gradio as gr
+import numpy as np
+
+def detection(image, slider):
+    return np.flip(image, axis=0)
+
+stream = Stream(
+    handler=detection, # (1)
+    modality="video", # (2)
+    mode="send-receive", # (3)
+    additional_inputs=[
+        gr.Slider(minimum=0, maximum=1, step=0.01, value=0.3) # (4)
+    ],
+    additional_outputs=None, # (5)
+    additional_outputs_handler=None # (6)
+)
+
+```
+
+1. See [Handlers](#handlers) for more information.
+1. See [Modalities](#modalities) for more information.
+1. See [Stream Modes](#stream-modes) for more information.
+1. See [Additional Inputs](#additional-inputs) for more information.
+1. See [Additional Outputs](#additional-outputs) for more information.
+1. See [Additional Outputs Handler](#additional-outputs) for more information.
+1. Mount the `Stream` on a `FastAPI` app with `stream.mount(app)` and you can add custom routes to it. See [Custom Routes and Frontend Integration](#custom-routes-and-frontend-integration) for more information.
+1. See [Built-in Routes](#built-in-routes) for more information.
+
+Run:
+
+```py
+stream.ui.launch()
+
+```
+
+```py
+app = FastAPI()
+stream.mount(app)
+
+# uvicorn app:app --host 0.0.0.0 --port 8000
+
+```
+
+### Stream Modes
+
+FastRTC supports three streaming modes:
+
+- `send-receive`: Bidirectional streaming (default)
+- `send`: Client-to-server only
+- `receive`: Server-to-client only
+
+### Modalities
+
+FastRTC supports three modalities:
+
+- `video`: Video streaming
+- `audio`: Audio streaming
+- `audio-video`: Combined audio and video streaming
+
+### Handlers
+
+The `handler` argument is the main argument of the `Stream` object. A handler should be a function or a class that inherits from `StreamHandler` or `AsyncStreamHandler` depending on the modality and mode.
+
+| Modality | send-receive | send | receive | | --- | --- | --- | --- | | video | Function that takes a video frame and returns a new video frame | Function that takes a video frame and returns a new frame | Function that takes a video frame and returns a new frame | | audio | `StreamHandler` or `AsyncStreamHandler` subclass | `StreamHandler` or `AsyncStreamHandler` subclass | Generator yielding audio frames | | audio-video | `AudioVideoStreamHandler` or `AsyncAudioVideoStreamHandler` subclass | Not Supported Yet | Not Supported Yet |
+
+## Methods
+
+The `Stream` has three main methods:
+
+- `.ui.launch()`: Launch a built-in UI for easily testing and sharing your stream. Built with [Gradio](https://www.gradio.app/). You can change the UI by setting the `ui` property of the `Stream` object. Also see the [Gradio guide](../gradio.md) for building Gradio apss with fastrtc.
+- `.fastphone()`: Get a free temporary phone number to call into your stream. Hugging Face token required.
+- `.mount(app)`: Mount the stream on a [FastAPI](https://fastapi.tiangolo.com/) app. Perfect for integrating with your already existing production system or for building a custom UI.
+
+Warning
+
+Websocket docs are only available for audio streams. Telephone docs are only available for audio streams in `send-receive` mode.
+
+## Additional Inputs
+
+You can add additional inputs to your stream using the `additional_inputs` argument. These inputs will be displayed in the generated Gradio UI and they will be passed to the handler as additional arguments.
+
+Tip
+
+For audio `StreamHandlers`, please read the special [note](../audio#requesting-inputs) on requesting inputs.
+
+In the automatic gradio UI, these inputs will be the same python type corresponding to the Gradio component. In our case, we used a `gr.Slider` as the additional input, so it will be passed as a float. See the [Gradio documentation](https://www.gradio.app/docs/gradio) for a complete list of components and their corresponding types.
+
+### Input Hooks
+
+Outside of the gradio UI, you are free to update the inputs however you like by using the `set_input` method of the `Stream` object.
+
+A common pattern is to use a `POST` request to send the updated data.
+
+```python
+from pydantic import BaseModel, Field
+from fastapi import FastAPI
+
+class InputData(BaseModel):
+    webrtc_id: str
+    conf_threshold: float = Field(ge=0, le=1)
+
+app = FastAPI()
+stream.mount(app)
+
+@app.post("/input_hook")
+async def _(data: InputData):
+    stream.set_input(data.webrtc_id, data.conf_threshold)
+
+```
+
+The updated data will be passed to the handler on the **next** call.
+
+## Additional Outputs
+
+You can return additional output from the handler by returning an instance of `AdditionalOutputs` from the handler. Let's modify our previous example to also return the number of detections in the frame.
+
+```python
+from fastrtc import Stream, AdditionalOutputs
+import gradio as gr
+
+def detection(image, conf_threshold=0.3):
+    processed_frame, n_objects = process_frame(image, conf_threshold)
+    return processed_frame, AdditionalOutputs(n_objects)
+
+stream = Stream(
+    handler=detection,
+    modality="video",
+    mode="send-receive",
+    additional_inputs=[
+        gr.Slider(minimum=0, maximum=1, step=0.01, value=0.3)
+    ],
+    additional_outputs=[gr.Number()], # (5)
+    additional_outputs_handler=lambda component, n_objects: n_objects
+)
+
+```
+
+We added a `gr.Number()` to the additional outputs and we provided an `additional_outputs_handler`.
+
+The `additional_outputs_handler` is **only** needed for the gradio UI. It is a function that takes the current state of the `component` and the instance of `AdditionalOutputs` and returns the updated state of the `component`. In our case, we want to update the `gr.Number()` with the number of detections.
+
+Tip
+
+Since the webRTC is very low latency, you probably don't want to return an additional output on each frame.
+
+### Output Hooks
+
+Outside of the gradio UI, you are free to access the output data however you like by calling the `output_stream` method of the `Stream` object.
+
+A common pattern is to use a `GET` request to get a stream of the output data.
+
+```python
+from fastapi.responses import StreamingResponse
+
+@app.get("/updates")
+async def stream_updates(webrtc_id: str):
+    async def output_stream():
+        async for output in stream.output_stream(webrtc_id):
+            # Output is the AdditionalOutputs instance
+            # Be sure to serialize it however you would like
+            yield f"data: {output.args[0]}\n\n"
+
+    return StreamingResponse(
+        output_stream(), 
+        media_type="text/event-stream"
+    )
+
+```
+
+## Custom Routes and Frontend Integration
+
+You can add custom routes for serving your own frontend or handling additional functionality once you have mounted the stream on a FastAPI app.
+
+```python
+from fastapi.responses import HTMLResponse
+from fastapi import FastAPI
+from fastrtc import Stream
+
+stream = Stream(...)
+
+app = FastAPI()
+stream.mount(app)
+
+# Serve a custom frontend
+@app.get("/")
+async def serve_frontend():
+    return HTMLResponse(content=open("index.html").read())
+
+```
+
+## Telephone Integration
+
+FastRTC provides built-in telephone support through the `fastphone()` method:
+
+```python
+# Launch with a temporary phone number
+stream.fastphone(
+    # Optional: If None, will use the default token in your machine or read from the HF_TOKEN environment variable
+    token="your_hf_token",  
+    host="127.0.0.1",
+    port=8000
+)
+
+```
+
+This will print out a phone number along with your temporary code you can use to connect to the stream. You are limited to **10 minutes** of calls per calendar month.
+
+Warning
+
+See this [section](../audio#telephone-integration) on making sure your stream handler is compatible for telephone usage.
+
+Tip
+
+If you don't have a HF token, you can get one [here](https://huggingface.co/settings/tokens).
+
+## Concurrency
+
+1. You can limit the number of concurrent connections by setting the `concurrency_limit` argument.
+1. You can limit the amount of time (in seconds) a connection can stay open by setting the `time_limit` argument.
+
+```python
+stream = Stream(
+    handler=handler,
+    concurrency_limit=10,
+    time_limit=3600
+)
+
+```
+
+# Video Streaming
+
+## Input/Output Streaming
+
+We already saw this example in the [Quickstart](../../#quickstart) and the [Core Concepts](../streams) section.
+
+Input/Output Streaming
+
+```py
+from fastrtc import Stream
+import gradio as gr
+
+def detection(image, conf_threshold=0.3): # (1)
+    processed_frame = process_frame(image, conf_threshold)
+    return processed_frame # (2)
+
+stream = Stream(
+    handler=detection,
+    modality="video",
+    mode="send-receive", # (3)
+    additional_inputs=[
+        gr.Slider(minimum=0, maximum=1, step=0.01, value=0.3)
+    ],
+)
+
+```
+
+1. The webcam frame will be represented as a numpy array of shape (height, width, RGB).
+
+1. The function must return a numpy array. It can take arbitrary values from other components.
+
+1. Set the `modality="video"` and `mode="send-receive"`
+
+1. The webcam frame will be represented as a numpy array of shape (height, width, RGB).
+
+1. The function must return a numpy array. It can take arbitrary values from other components.
+
+1. Set the `modality="video"` and `mode="send-receive"`
+
+## Server-to-Client Only
+
+In this case, we stream from the server to the client so we will write a generator function that yields the next frame from the video (as a numpy array) and set the `mode="receive"` in the `WebRTC` component.
+
+Server-To-Client
+
+```py
+from fastrtc import Stream
+import cv2
+
+def generation():
+    url = "https://download.tsi.telecom-paristech.fr/gpac/dataset/dash/uhd/mux_sources/hevcds_720p30_2M.mp4"
+    cap = cv2.VideoCapture(url)
+    iterating = True
+    while iterating:
+        iterating, frame = cap.read()
+        yield frame
+
+stream = Stream(
+    handler=generation,
+    modality="video",
+    mode="receive"
+)
+
+```
+
+## Skipping Frames
+
+If your event handler is not quite real-time yet, then the output feed will look very laggy.
+
+To fix this, you can set the `skip_frames` parameter to `True`. This will skip the frames that are received while the event handler is still running.
+
+Skipping Frames
+
+```py
+import time
+
+import numpy as np
+from fastrtc import Stream, VideoStreamHandler
+
+
+def process_image(image):
+    time.sleep(
+        0.2
+    )  # Simulating 200ms processing time per frame; input arrives faster (30 FPS).
+    return np.flip(image, axis=0)
+
+
+stream = Stream(
+    handler=VideoStreamHandler(process_image, skip_frames=True),
+    modality="video",
+    mode="send-receive",
+)
+
+stream.ui.launch()
+
+```
+
+## Setting the Output Frame Rate
+
+You can set the output frame rate by setting the `fps` parameter in the `VideoStreamHandler`.
+
+Setting the Output Frame Rate
+
+```py
+def generation():
+    url = "https://github.com/user-attachments/assets/9636dc97-4fee-46bb-abb8-b92e69c08c71"
+    cap = cv2.VideoCapture(url)
+    iterating = True
+
+    # FPS calculation variables
+    frame_count = 0
+    start_time = time.time()
+    fps = 0
+
+    while iterating:
+        iterating, frame = cap.read()
+
+        # Calculate and print FPS
+        frame_count += 1
+        elapsed_time = time.time() - start_time
+        if elapsed_time >= 1.0:  # Update FPS every second
+            fps = frame_count / elapsed_time
+            yield frame, AdditionalOutputs(fps)
+            frame_count = 0
+            start_time = time.time()
+        else:
+            yield frame
+
+
+stream = Stream(
+    handler=VideoStreamHandler(generation, fps=60),
+    modality="video",
+    mode="receive",
+    additional_outputs=[gr.Number(label="FPS")],
+    additional_outputs_handler=lambda prev, cur: cur,
+)
+
+stream.ui.launch()
+
+```
+
+# FastRTC Docs
+
+## Connecting
+
+To connect to the server, you need to create a new RTCPeerConnection object and call the `setupWebRTC` function below. {% if mode in ["send-receive", "receive"] %} This code snippet assumes there is an html element with an id of `{{ modality }}_output_component_id` where the output will be displayed. It should be {{ "a `<audio>`" if modality == "audio" else "an `<video>`"}} element.
+
+```js
+// pass any rtc_configuration params here
+const pc = new RTCPeerConnection();
+{% if mode in ["send-receive", "receive"] %}
+const {{modality}}_output_component = document.getElementById("{{modality}}_output_component_id");
+{% endif %}                     
+async function setupWebRTC(peerConnection) {
+    {%- if mode in ["send-receive", "send"] -%}      
+    // Get {{modality}} stream from webcam
+    const stream = await navigator.mediaDevices.getUserMedia({
+        {{modality}}: true,
+    })
+    {%- endif -%}
+    {% if mode == "send-receive" %}
+
+    //  Send {{ self.modality }} stream to server
+    stream.getTracks().forEach(async (track) => {
+        const sender = pc.addTrack(track, stream);
+    })
+    {% elif mode == "send" %}
+    // Receive {self.modality} stream from server
+    pc.addTransceiver({{modality}}, { direction: "recvonly" })
+    {%- endif -%}
+    {% if mode in ["send-receive", "receive"] %}
+    peerConnection.addEventListener("track", (evt) => {
+        if ({{modality}}_output_component && 
+            {{modality}}_output_component.srcObject !== evt.streams[0]) {
+            {{modality}}_output_component.srcObject = evt.streams[0];
+        }
+    });
+    {% endif %}
+    // Create data channel (needed!)
+    const dataChannel = peerConnection.createDataChannel("text");
+
+    // Create and send offer
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    // Send offer to server
+    const response = await fetch('/webrtc/offer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            sdp: offer.sdp,
+            type: offer.type,
+            webrtc_id: Math.random().toString(36).substring(7)
+        })
+    });
+
+    // Handle server response
+    const serverResponse = await response.json();
+    await peerConnection.setRemoteDescription(serverResponse);
+}
+
+```
+
+{%if additional_inputs %}
+
+## Sending Input Data
+
+Your python handler can request additional data from the frontend by calling the `fetch_args()` method (see \[here\](#add docs)).
+
+This will send a `send_input` message over the WebRTC data channel. Upon receiving this message, you should trigger the `set_input` hook of your stream. A simple way to do this is with a `POST` request.
+
+```python
+@stream.post("/input_hook")
+def _(data: PydanticBody):
+    stream.set_inputs(data.webrtc_id, data.inputs)
+
+```
+
+And then in your client code:
+
+```js
+const data_channel = peerConnection.createDataChannel("text");
+
+data_channel.onmessage = (event) => {
+    event_json = JSON.parse(event.data);
+    if (event_json.type === "send_input") {
+        fetch('/input_hook', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: inputs
+        }
+            )
+        };
+    };
+
+```
+
+The `set_inputs` hook will set the `latest_args` property of your stream to whatever the second argument is.
+
+NOTE: It is completely up to you how you want to call the `set_inputs` hook. Here we use a `POST` request but you can use a websocket or any other protocol.
+
+{% endif %}
+
+{% if additional_outputs %}
+
+## Fetching Output Data
+
+Your python handler can send additional data to the front end by returning or yielding `AdditionalOutputs(...)`. See the [docs](https://freddyaboulton.github.io/gradio-webrtc/user-guide/#additional-outputs).
+
+Your front end can fetch these outputs by calling the `get_outputs` hook of the `Stream`. Here is an example using `server-sent-events`:
+
+```python
+@stream.get("/outputs")
+def _(webrtc_id: str)
+    async def get_outputs():
+        while True:
+            for output in stream.get_output(webrtc_id):
+                # Serialize to a string prior to this step
+                yield f"data: {output}\n\n"
+            await
+    return StreamingResponse(get_outputs(),  media_type="text/event-stream")
+
+```
+
+NOTE: It is completely up to you how you want to call the `get_output` hook. Here we use a `server-sent-events` but you can use whatever protocol you want!
+
+{% endif %}
+
+## Stopping
+
+You can stop the stream by calling the following function:
+
+```js
+function stop(pc) {
+  // close transceivers
+  if (pc.getTransceivers) {
+    pc.getTransceivers().forEach((transceiver) => {
+      if (transceiver.stop) {
+        transceiver.stop();
+      }
+    });
+  }
+
+  // close local audio / video
+  if (pc.getSenders()) {
+    pc.getSenders().forEach((sender) => {
+      if (sender.track && sender.track.stop) sender.track.stop();
+    });
+  }
+
+  // close peer connection
+  setTimeout(() => {
+    pc.close();
+  }, 500);
+}
+
+```
+
+# FastRTC WebSocket Docs
+
+{% if modality != "audio" or mode != "send-receive" %} WebSocket connections are currently only supported for audio in send-receive mode.
+
+## Connecting
+
+To connect to the server via WebSocket, you'll need to establish a WebSocket connection and handle audio processing. The code below assumes there is an HTML audio element for output playback.
+
+```js
+// Setup audio context and stream
+const audioContext = new AudioContext();
+const stream = await navigator.mediaDevices.getUserMedia({
+    audio: true
+});
+
+// Create WebSocket connection
+const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/websocket/offer`);
+
+ws.onopen = () => {
+    // Send initial start message with unique ID
+    ws.send(JSON.stringify({
+        event: "start",
+        websocket_id: generateId()  // Implement your own ID generator
+    }));
+
+    // Setup audio processing
+    const source = audioContext.createMediaStreamSource(stream);
+    const processor = audioContext.createScriptProcessor(2048, 1, 1);
+    source.connect(processor);
+    processor.connect(audioContext.destination);
+
+    processor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+        const mulawData = convertToMulaw(inputData, audioContext.sampleRate);
+        const base64Audio = btoa(String.fromCharCode.apply(null, mulawData));
+
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                event: "media",
+                media: {
+                    payload: base64Audio
+                }
+            }));
+        }
+    };
+};
+
+// Handle incoming audio
+const outputContext = new AudioContext({ sampleRate: 24000 });
+let audioQueue = [];
+let isPlaying = false;
+
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.event === "media") {
+        // Process received audio
+        const audioData = atob(data.media.payload);
+        const mulawData = new Uint8Array(audioData.length);
+        for (let i = 0; i < audioData.length; i++) {
+            mulawData[i] = audioData.charCodeAt(i);
+        }
+
+        // Convert mu-law to linear PCM
+        const linearData = alawmulaw.mulaw.decode(mulawData);
+        const audioBuffer = outputContext.createBuffer(1, linearData.length, 24000);
+        const channelData = audioBuffer.getChannelData(0);
+
+        for (let i = 0; i < linearData.length; i++) {
+            channelData[i] = linearData[i] / 32768.0;
+        }
+
+        audioQueue.push(audioBuffer);
+        if (!isPlaying) {
+            playNextBuffer();
+        }
+    }
+};
+
+function playNextBuffer() {
+    if (audioQueue.length === 0) {
+        isPlaying = false;
+        return;
+    }
+
+    isPlaying = true;
+    const bufferSource = outputContext.createBufferSource();
+    bufferSource.buffer = audioQueue.shift();
+    bufferSource.connect(outputContext.destination);
+    bufferSource.onended = playNextBuffer;
+    bufferSource.start();
+}
+
+```
+
+Note: This implementation requires the `alawmulaw` library for audio encoding/decoding:
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/alawmulaw"></script>
+
+```
+
+## Handling Input Requests
+
+When the server requests additional input data, it will send a `send_input` message over the WebSocket. You should handle this by sending the data to your input hook:
+
+```js
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    // Handle send_input messages
+    if (data?.type === "send_input") {
+        fetch('/input_hook', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                webrtc_id: websocket_id,  // Use the same ID from connection
+                inputs: your_input_data 
+            })
+        });
+    }
+    // ... existing audio handling code ...
+};
+
+```
+
+## Receiving Additional Outputs
+
+To receive additional outputs from the server, you can use Server-Sent Events (SSE):
+
+```js
+const eventSource = new EventSource('/outputs?webrtc_id=' + websocket_id);
+eventSource.addEventListener("output", (event) => {
+    const eventJson = JSON.parse(event.data);
+    // Handle the output data here
+    console.log("Received output:", eventJson);
+});
+
+```
+
+## Stopping
+
+To stop the WebSocket connection:
+
+```js
+function stop(ws) {
+    if (ws) {
+        ws.send(JSON.stringify({
+            event: "stop"
+        }));
+        ws.close();
+    }
+}
+
+```
+
+{% endif %}
+
+When deploying in cloud environments with firewalls (like Hugging Face Spaces, RunPod), your WebRTC connections may be blocked from making direct connections. In these cases, you need a TURN server to relay the audio/video traffic between users. This guide covers different options for setting up FastRTC to connect to a TURN server.
+
+Tip
+
+The `rtc_configuration` parameter of the `Stream` class also be passed to the [`WebRTC`](../userguide/gradio) component directly if you're building a standalone gradio app.
+
+## Cloudflare Calls API
+
+Cloudflare also offers a managed TURN server with [Cloudflare Calls](https://www.cloudflare.com/en-au/developer-platform/products/cloudflare-calls/).
+
+### With a Hugging Face Token
+
+Cloudflare and Hugging Face have partnered to allow you to stream 10gb of WebRTC traffic per month for free with a Hugging Face account!
+
+```python
+from fastrtc import Stream, get_cloudflare_turn_credentials_async, get_cloudflare_turn_credentials
+
+# Make sure the HF_TOKEN environment variable is set
+# Or pass in a callable with all arguments set
+
+# make sure you don't commit your token to git!
+TOKEN = "hf_..."
+async def get_credentials():
+    return await get_cloudflare_turn_credentials_async(hf_token=TOKEN)
+
+stream = Stream(
+    handler=...,
+    rtc_configuration=get_credentials,
+    server_rtc_configuration=get_cloudflare_turn_credentials(ttl=360_000)
+    modality="audio",
+    mode="send-receive",
+)
+
+```
+
+Tip
+
+Setting an rtc configuration in the server is recommended but not required. It's a good practice to set short lived credentials in the client (default `ttl` value of 10 minutes when calling `get_cloudflare_turn_credentials*`) but you can share the same credentials between server and client.
+
+### With a Cloudflare API Token
+
+Once you have exhausted your monthly quota, you can create a **free** Cloudflare account.
+
+Create an [account](https://developers.cloudflare.com/fundamentals/setup/account/create-account/) and head to the [Calls section in your dashboard](https://dash.cloudflare.com/?to=/:account/calls).
+
+Choose `Create -> TURN App`, give it a name (like `fastrtc-demo`), and then hit the Create button.
+
+Take note of the Turn Token ID (often exported as `TURN_KEY_ID`) and API Token (exported as `TURN_KEY_API_TOKEN`).
+
+You can then connect from the WebRTC component like so:
+
+```python
+from fastrtc import Stream, get_cloudflare_turn_credentials_async
+
+# Make sure the TURN_KEY_ID and TURN_KEY_API_TOKEN environment variables are set
+stream = Stream(
+    handler=...,
+    rtc_configuration=get_cloudflare_turn_credentials_async,
+    modality="audio",
+    mode="send-receive",
+)
+
+```
+
+## Community Server (Deprecated)
+
+Hugging Face graciously provides 10gb of TURN traffic through Cloudflare's global network. In order to use it, you need to first create a Hugging Face account by going to [huggingface.co](https://huggingface.co/). Then you can create an [access token](https://huggingface.co/docs/hub/en/security-tokens).
+
+Then you can use the `get_hf_turn_credentials` helper to get your credentials:
+
+```python
+from fastrtc import get_hf_turn_credentials, Stream
+
+# Make sure the HF_TOKEN environment variable is set
+
+Stream(
+    handler=...,
+    rtc_configuration=get_hf_turn_credentials,
+    modality="audio",
+    mode="send-receive"
+)
+
+```
+
+Warning
+
+This function is now deprecated. Please use `get_cloudflare_turn_credentials` instead.
+
+## Twilio API
+
+An easy way to do this is to use a service like Twilio.
+
+Create a **free** [account](https://login.twilio.com/u/signup) and the install the `twilio` package with pip (`pip install twilio`). You can then connect from the WebRTC component like so:
+
+```python
+from fastrtc import Stream
+from twilio.rest import Client
+import os
+
+account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+
+client = Client(account_sid, auth_token)
+
+token = client.tokens.create()
+
+rtc_configuration = {
+    "iceServers": token.ice_servers,
+    "iceTransportPolicy": "relay",
+}
+
+Stream(
+    handler=...,
+    rtc_configuration=rtc_configuration,
+    modality="audio",
+    mode="send-receive"
+)
+
+```
+
+Automatic login
+
+You can log in automatically with the `get_twilio_turn_credentials` helper
+
+```python
+from gradio_webrtc import get_twilio_turn_credentials
+
+# Will automatically read the TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN
+# env variables but you can also pass in the tokens as parameters
+rtc_configuration = get_twilio_turn_credentials()
+
+```
+
+## Self Hosting
+
+We have developed a script that can automatically deploy a TURN server to Amazon Web Services (AWS). You can follow the instructions [here](https://github.com/freddyaboulton/turn-server-deploy) or this guide.
+
+### Prerequisites
+
+Clone the following [repository](https://github.com/freddyaboulton/turn-server-deploy) and install the `aws` cli if you have not done so already (`pip install awscli`).
+
+Log into your AWS account and create an IAM user with the following permissions:
+
+- [AWSCloudFormationFullAccess](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/policies/details/arn%3Aaws%3Aiam%3A%3Aaws%3Apolicy%2FAWSCloudFormationFullAccess)
+- [AmazonEC2FullAccess](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/policies/details/arn%3Aaws%3Aiam%3A%3Aaws%3Apolicy%2FAmazonEC2FullAccess)
+
+Create a key pair for this user and write down the "access key" and "secret access key". Then log into the aws cli with these credentials (`aws configure`).
+
+Finally, create an ec2 keypair (replace `your-key-name` with the name you want to give it).
+
+```text
+aws ec2 create-key-pair --key-name your-key-name --query 'KeyMaterial' --output text > your-key-name.pem
+
+```
+
+### Running the script
+
+Open the `parameters.json` file and fill in the correct values for all the parameters:
+
+- `KeyName`: The key file we just created, e.g. `your-key-name` (omit `.pem`).
+- `TurnUserName`: The username needed to connect to the server.
+- `TurnPassword`: The password needed to connect to the server.
+- `InstanceType`: One of the following values `t3.micro`, `t3.small`, `t3.medium`, `c4.large`, `c5.large`.
+
+Then run the deployment script:
+
+```bash
+aws cloudformation create-stack \
+  --stack-name turn-server \
+  --template-body file://deployment.yml \
+  --parameters file://parameters.json \
+  --capabilities CAPABILITY_IAM
+
+```
+
+You can then wait for the stack to come up with:
+
+```bash
+aws cloudformation wait stack-create-complete \
+  --stack-name turn-server
+
+```
+
+Next, grab your EC2 server's public ip with:
+
+```text
+aws cloudformation describe-stacks \
+  --stack-name turn-server \
+  --query 'Stacks[0].Outputs' > server-info.json
+
+```
+
+The `server-info.json` file will have the server's public IP and public DNS:
+
+```json
+[
+    {
+        "OutputKey": "PublicIP",
+        "OutputValue": "35.173.254.80",
+        "Description": "Public IP address of the TURN server"
+    },
+    {
+        "OutputKey": "PublicDNS",
+        "OutputValue": "ec2-35-173-254-80.compute-1.amazonaws.com",
+        "Description": "Public DNS name of the TURN server"
+    }
+]
+
+```
+
+Finally, you can connect to your EC2 server from the gradio WebRTC component via the `rtc_configuration` argument:
+
+```python
+from fastrtc import Stream
+rtc_configuration = {
+    "iceServers": [
+        {
+            "urls": "turn:35.173.254.80:80",
+            "username": "<my-username>",
+            "credential": "<my-password>"
+        },
+    ]
+}
+Stream(
+    handler=...,
+    rtc_configuration=rtc_configuration,
+    modality="audio",
+    mode="send-receive"
+)
+
+```
+
+Any of the parameters for the `Stream` class can be passed to the [`WebRTC`](../userguide/gradio) component directly.
+
+## Track Constraints
+
+You can specify the `track_constraints` parameter to control how the data is streamed to the server. The full documentation on track constraints is [here](https://developer.mozilla.org/en-US/docs/Web/API/MediaTrackConstraints#constraints).
+
+For example, you can control the size of the frames captured from the webcam like so:
+
+```python
+track_constraints = {
+    "width": {"exact": 500},
+    "height": {"exact": 500},
+    "frameRate": {"ideal": 30},
+}
+webrtc = Stream(
+    handler=...,
+    track_constraints=track_constraints,
+    modality="video",
+    mode="send-receive")
+
+```
+
+Warning
+
+WebRTC may not enforce your constraints. For example, it may rescale your video (while keeping the same resolution) in order to maintain the desired frame rate (or reach a better one). If you really want to enforce height, width and resolution constraints, use the `rtp_params` parameter as set `"degradationPreference": "maintain-resolution"`.
+
+```python
+image = Stream(
+    modality="video",
+    mode="send",
+    track_constraints=track_constraints,
+    rtp_params={"degradationPreference": "maintain-resolution"}
+)
+
+```
+
+## The RTC Configuration
+
+You can configure how the connection is created on the client by passing an `rtc_configuration` parameter to the `WebRTC` component constructor. See the list of available arguments [here](https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/RTCPeerConnection#configuration).
+
+Warning
+
+When deploying on a remote server, the `rtc_configuration` parameter must be passed in. See [Deployment](../deployment).
+
+## Reply on Pause Voice-Activity-Detection
+
+The `ReplyOnPause` class runs a Voice Activity Detection (VAD) algorithm to determine when a user has stopped speaking.
+
+1. First, the algorithm determines when the user has started speaking.
+1. Then it groups the audio into chunks.
+1. On each chunk, we determine the length of human speech in the chunk.
+1. If the length of human speech is below a threshold, a pause is detected.
+
+The following parameters control this argument:
+
+```python
+from fastrtc import AlgoOptions, ReplyOnPause, Stream
+
+options = AlgoOptions(audio_chunk_duration=0.6, # (1)
+                      started_talking_threshold=0.2, # (2)
+                      speech_threshold=0.1, # (3)
+                      )
+
+Stream(
+    handler=ReplyOnPause(..., algo_options=algo_options),
+    modality="audio",
+    mode="send-receive"
+)
+
+```
+
+1. This is the length (in seconds) of audio chunks.
+1. If the chunk has more than 0.2 seconds of speech, the user started talking.
+1. If, after the user started speaking, there is a chunk with less than 0.1 seconds of speech, the user stopped speaking.
+
+## Stream Handler Input Audio
+
+You can configure the sampling rate of the audio passed to the `ReplyOnPause` or `StreamHandler` instance with the `input_sampling_rate` parameter. The current default is `48000`
+
+```python
+from fastrtc import ReplyOnPause, Stream
+
+stream = Stream(
+    handler=ReplyOnPause(..., input_sampling_rate=24000),
+    modality="audio",
+    mode="send-receive"
+)
+
+```
+
+## Stream Handler Output Audio
+
+You can configure the output sampling rate of `ReplyOnPause` (and any `StreamHandler`) with the `output_sample_rate` and parameter. For example:
+
+```python
+from fastrtc import ReplyOnPause, Stream
+
+stream = Stream(
+    handler=ReplyOnPause(..., output_sample_rate=16000),
+    modality="audio",
+    mode="send-receive"
+)
+
+```
+
+## Audio Icon
+
+You can display an icon of your choice instead of the default wave animation for audio streaming. Pass any local path or url to an image (svg, png, jpeg) to the components `icon` parameter. This will display the icon as a circular button. When audio is sent or recevied (depending on the `mode` parameter) a pulse animation will emanate from the button.
+
+You can control the button color and pulse color with `icon_button_color` and `pulse_color` parameters. They can take any valid css color.
+
+Warning
+
+The `icon` parameter is only supported in the `WebRTC` component.
+
+```python
+audio = WebRTC(
+    label="Stream",
+    rtc_configuration=rtc_configuration,
+    mode="receive",
+    modality="audio",
+    icon="phone-solid.svg",
+)
+
+```
+
+```python
+audio = WebRTC(
+    label="Stream",
+    rtc_configuration=rtc_configuration,
+    mode="receive",
+    modality="audio",
+    icon="phone-solid.svg",
+    icon_button_color="black",
+    pulse_color="black",
+)
+
+```
+
+## Changing the Button Text
+
+You can supply a `button_labels` dictionary to change the text displayed in the `Start`, `Stop` and `Waiting` buttons that are displayed in the UI. The keys must be `"start"`, `"stop"`, and `"waiting"`.
+
+Warning
+
+The `button_labels` parameter is only supported in the `WebRTC` component.
+
+```python
+webrtc = WebRTC(
+    label="Video Chat",
+    modality="audio-video",
+    mode="send-receive",
+    button_labels={"start": "Start Talking to Gemini"}
+)
+
+```
+
+## Demo does not work when deploying to the cloud
+
+Make sure you are using a TURN server. See [deployment](../deployment).
+
+## Recorded input audio sounds muffled during output audio playback
+
+By default, the microphone is [configured](https://github.com/freddyaboulton/gradio-webrtc/blob/903f1f70bd586f638ad3b5a3940c7a8ec70ad1f5/backend/gradio_webrtc/webrtc.py#L575) to do echo cancellation. This is what's causing the recorded audio to sound muffled when the streamed audio starts playing. You can disable this via the `track_constraints` (see [Advanced Configuration](../advanced-configuration)) with the following code:
+
+```python
+stream = Stream(
+    track_constraints={
+            "echoCancellation": False,
+            "noiseSuppression": {"exact": True},
+            "autoGainControl": {"exact": True},
+            "sampleRate": {"ideal": 24000},
+            "sampleSize": {"ideal": 16},
+            "channelCount": {"exact": 1},
+        },
+    rtc_configuration=None,
+    mode="send-receive",
+    modality="audio",
+)
+
+```
+
+## How to raise errors in the UI
+
+You can raise `WebRTCError` in order for an error message to show up in the user's screen. This is similar to how `gr.Error` works.
+
+Warning
+
+The `WebRTCError` class is only supported in the `WebRTC` component.
+
+Here is a simple example:
+
+```python
+def generation(num_steps):
+    for _ in range(num_steps):
+        segment = AudioSegment.from_file(
+            "/Users/freddy/sources/gradio/demo/audio_debugger/cantina.wav"
+        )
+        yield (
+            segment.frame_rate,
+            np.array(segment.get_array_of_samples()).reshape(1, -1),
+        )
+        time.sleep(3.5)
+    raise WebRTCError("This is a test error")
+
+with gr.Blocks() as demo:
+    audio = WebRTC(
+    label="Stream",
+    mode="receive",
+    modality="audio",
+    )
+    num_steps = gr.Slider(
+        label="Number of Steps",
+        minimum=1,
+        maximum=10,
+        step=1,
+        value=5,
+    )
+    button = gr.Button("Generate")
+
+    audio.stream(
+        fn=generation, inputs=[num_steps], outputs=[audio], trigger=button.click
+    )
+
+demo.launch()
+
+```
+
+# TURN Credential Utils
+
+## `get_turn_credentials_async`
+
+```python
+async def get_turn_credentials_async(
+    method: Literal["hf", "twilio", "cloudflare"] = "cloudflare",
+    **kwargs
+):
+
+```
+
+Retrieves TURN credentials from the specified provider. This can be passed directly to the Stream class and it will be called for each unique WebRTC connection via the Gradio UI. When mounting to FastAPI, call this function yourself to return the credentials to the frontend client, for example, in the index route, you can call this function and embed the credentials in the source code of the index.html. See the FastRTC spaces at hf.co/fastrtc for an example.
+
+Acts as a dispatcher function to call the appropriate credential retrieval function based on the method specified.
+
+Args:
+
+```text
+method: Literal["hf", "twilio", "cloudflare"] | None
+    The provider to use. 'hf' uses the deprecated Hugging Face endpoint.
+    'cloudflare' uses either Cloudflare keys or the HF endpoint.
+    'twilio' uses the Twilio API. Defaults to "cloudflare".
+**kwargs: 
+    Additional keyword arguments passed directly to the underlying
+    provider-specific function (e.g., `token`, `ttl` for 'hf';
+    `twilio_sid`, `twilio_token` for 'twilio'; `turn_key_id`,
+    `turn_key_api_token`, `hf_token`, `ttl` for 'cloudflare').
+
+```
+
+Returns:
+
+```text
+dict:
+    A dictionary containing the TURN credentials from the chosen provider.
+
+```
+
+Raises:
+
+```text
+ValueError:
+    If an invalid method is specified.
+    Also raises exceptions from the underlying provider functions (see their
+    docstrings).
+
+```
+
+Example
+
+```python
+>>> from fastrtc import get_turn_credentials_async, Stream
+>>> credentials = await get_turn_credentials_async()
+>>> print(credentials)
+>>> # Can pass directly to stream class
+>>> stream = Stream(..., rtc_configuration=get_turn_credentials_async)
+
+```
+
+## `get_turn_credentials`
+
+```python
+def get_turn_credentials(
+    method: Literal["hf", "twilio", "cloudflare"] = "cloudflare",
+    **kwargs
+):
+
+```
+
+Retrieves TURN credentials from the specified provider. This can be passed directly to the Stream class and it will be called for each unique WebRTC connection via the Gradio UI. When mounting to FastAPI, call this function yourself to return the credentials to the frontend client, for example, in the index route, you can call this function and embed the credentials in the source code of the index.html. See the FastRTC spaces at hf.co/fastrtc for an example.
+
+Acts as a dispatcher function to call the appropriate credential retrieval function based on the method specified.
+
+Args:
+
+```text
+method: Literal["hf", "twilio", "cloudflare"] | None
+    The provider to use. 'hf' uses the deprecated Hugging Face endpoint.
+    'cloudflare' uses either Cloudflare keys or the HF endpoint.
+    'twilio' uses the Twilio API. Defaults to "cloudflare".
+**kwargs: 
+    Additional keyword arguments passed directly to the underlying
+    provider-specific function (e.g., `token`, `ttl` for 'hf';
+    `twilio_sid`, `twilio_token` for 'twilio'; `turn_key_id`,
+    `turn_key_api_token`, `hf_token`, `ttl` for 'cloudflare').
+
+```
+
+Returns:
+
+```text
+dict:
+    A dictionary containing the TURN credentials from the chosen provider.
+
+```
+
+Raises:
+
+```text
+ValueError:
+    If an invalid method is specified.
+    Also raises exceptions from the underlying provider functions (see their
+    docstrings).
+
+```
+
+Example
+
+```python
+>>> from fastrtc import get_turn_credentials, Stream
+>>> credentials = get_turn_credentials()
+>>> print(credentials)
+>>> # Can pass directly to stream class
+>>> stream = Stream(..., rtc_configuration=get_turn_credentials_async)
+
+```
+
+## `get_cloudflare_turn_credentials_async`
+
+```python
+async def get_cloudflare_turn_credentials_async(
+    turn_key_id=None,
+    turn_key_api_token=None,
+    hf_token=None,
+    ttl=600,
+    client: httpx.AsyncClient | None = None,
+):
+
+```
+
+Asynchronously retrieves TURN credentials from Cloudflare or Hugging Face.
+
+Asynchronously fetches TURN server credentials either directly from Cloudflare using API keys or via the Hugging Face TURN endpoint using an HF token. The HF token method takes precedence if provided.
+
+Args:
+
+```text
+turn_key_id (str, optional):
+    Cloudflare TURN key ID. Defaults to None,
+    in which case the CLOUDFLARE_TURN_KEY_ID environment variable is used.
+turn_key_api_token (str, optional):
+    Cloudflare TURN key API token.
+    Defaults to None, in which case the CLOUDFLARE_TURN_KEY_API_TOKEN
+    environment variable is used.
+hf_token (str, optional):
+    Hugging Face API token. If provided, this method
+    is used instead of Cloudflare keys.
+    Defaults to None, in which case the HF_TOKEN environment variable is used.
+ttl (int, optional): Time-to-live for the credentials in seconds.
+    Defaults to 600.
+client (httpx.AsyncClient | None, optional): An existing httpx async client
+    to use for the request. If None, a new client is created per request.
+    Defaults to None.
+
+```
+
+Returns:
+
+```text
+dict: A dictionary containing the TURN credentials (ICE servers).
+
+```
+
+Raises:
+
+```text
+ValueError: If neither HF token nor Cloudflare keys (either as arguments
+    or environment variables) are provided.
+Exception: If the request to the credential server fails.
+
+```
+
+Example
+
+```python
+>>> from fastrtc import get_cloudflare_turn_crendials_async, Stream
+>>> credentials = await get_cloudflare_turn_credentials_async()
+>>> print(credentials)
+>>> # Can pass directly to stream class
+>>> stream = Stream(..., rtc_configuration=get_turn_credentials_async)
+
+```
+
+## `get_cloudflare_turn_credentials`
+
+```python
+def get_cloudflare_turn_credentials(
+    turn_key_id=None,
+    turn_key_api_token=None,
+    hf_token=None,
+    ttl=600,
+    client: httpx.AsyncClient | None = None,
+):
+
+```
+
+Retrieves TURN credentials from Cloudflare or Hugging Face.
+
+Fetches TURN server credentials either directly from Cloudflare using API keys or via the Hugging Face TURN endpoint using an HF token. The HF token method takes precedence if provided.
+
+Args:
+
+```text
+turn_key_id (str, optional):
+    Cloudflare TURN key ID. Defaults to None,
+    in which case the CLOUDFLARE_TURN_KEY_ID environment variable is used.
+turn_key_api_token (str, optional):
+    Cloudflare TURN key API token.
+    Defaults to None, in which case the CLOUDFLARE_TURN_KEY_API_TOKEN
+    environment variable is used.
+hf_token (str, optional):
+    Hugging Face API token. If provided, this method
+    is used instead of Cloudflare keys.
+    Defaults to None, in which case the HF_TOKEN environment variable is used.
+ttl (int, optional): Time-to-live for the credentials in seconds.
+    Defaults to 600.
+client (httpx.AsyncClient | None, optional): An existing httpx async client
+    to use for the request. If None, a new client is created per request.
+    Defaults to None.
+
+```
+
+Returns:
+
+```text
+dict: A dictionary containing the TURN credentials (ICE servers).
+
+```
+
+Raises:
+
+```text
+ValueError: If neither HF token nor Cloudflare keys (either as arguments
+    or environment variables) are provided.
+Exception: If the request to the credential server fails.
+
+```
+
+Example
+
+```python
+>>> from fastrtc import get_cloudflare_turn_crendials_async, Stream
+>>> credentials = await get_cloudflare_turn_credentials_async()
+>>> print(credentials)
+>>> # Can pass directly to stream class
+>>> stream = Stream(..., rtc_configuration=get_turn_credentials_async)
+
+```
+
+## `get_twilio_turn_credentials`
+
+```python
+def get_twilio_turn_credentials(
+    twilio_sid=None,
+    twilio_token=None):
+
+```
+
+Retrieves TURN credentials from Twilio.
+
+Uses the Twilio REST API to generate temporary TURN credentials. Requires the `twilio` package to be installed.
+
+Args:
+
+```text
+twilio_sid (str, optional):
+    Twilio Account SID. Defaults to None, in which
+    case the TWILIO_ACCOUNT_SID environment variable is used.
+twilio_token (str, optional): 
+    Twilio Auth Token. Defaults to None, in which
+    case the TWILIO_AUTH_TOKEN environment variable is used.
+
+```
+
+Returns:
+
+```text
+dict:
+    A dictionary containing the TURN credentials formatted for WebRTC,
+    including 'iceServers' and 'iceTransportPolicy'.
+
+```
+
+Raises:
+
+```text
+ImportError: If the `twilio` package is not installed.
+ValueError: If Twilio credentials (SID and token) are not provided either
+    as arguments or environment variables.
+TwilioRestException: If the Twilio API request fails.
+
+```
+
+## `ReplyOnPause` Class
+
+```python
+ReplyOnPause(
+    fn: ReplyFnGenerator,
+    startup_fn: Callable | None = None,
+    algo_options: AlgoOptions | None = None,
+    model_options: ModelOptions | None = None,
+    can_interrupt: bool = True,
+    expected_layout: Literal["mono", "stereo"] = "mono",
+    output_sample_rate: int = 24000,
+    output_frame_size: int | None = None,  # Deprecated
+    input_sample_rate: int = 48000,
+    model: PauseDetectionModel | None = None,
+)
+
+```
+
+A stream handler that processes incoming audio, detects pauses, and triggers a reply function (`fn`) when a pause is detected.
+
+This handler accumulates audio chunks, uses a Voice Activity Detection (VAD) model to determine speech segments, and identifies pauses based on configurable thresholds. Once a pause is detected after speech has started, it calls the provided generator function `fn` with the accumulated audio.
+
+It can optionally run a `startup_fn` at the beginning and supports interruption of the reply function if new audio arrives.
+
+### Methods
+
+#### `__init__`
+
+```python
+__init__(
+    fn: ReplyFnGenerator,
+    startup_fn: Callable | None = None,
+    algo_options: AlgoOptions | None = None,
+    model_options: ModelOptions | None = None,
+    can_interrupt: bool = True,
+    expected_layout: Literal["mono", "stereo"] = "mono",
+    output_sample_rate: int = 24000,
+    output_frame_size: int | None = None,  # Deprecated
+    input_sample_rate: int = 48000,
+    model: PauseDetectionModel | None = None,
+)
+
+```
+
+Initializes the ReplyOnPause handler.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `fn` | `ReplyFnGenerator` | The generator function to execute upon pause detection. It receives `(sample_rate, audio_array)` and optionally `*args`. | | `startup_fn` | `Callable | None` | An optional function to run once at the beginning. | | `algo_options` | `AlgoOptions | None` | Options for the pause detection algorithm. | | `model_options` | `ModelOptions | None` | Options for the VAD model. | | `can_interrupt` | `bool` | If True, incoming audio during `fn` execution will stop the generator and process the new audio. | | `expected_layout` | `Literal["mono", "stereo"]` | Expected input audio layout ('mono' or 'stereo'). | | `output_sample_rate` | `int` | The sample rate expected for audio yielded by `fn`. | | `output_frame_size` | `int | None` | Deprecated. | | `input_sample_rate` | `int` | The expected sample rate of incoming audio. | | `model` | `PauseDetectionModel | None` | An optional pre-initialized VAD model instance. |
+
+______________________________________________________________________
+
+#### `receive`
+
+```python
+receive(frame: tuple[int, np.ndarray]) -> None
+
+```
+
+Receives an audio frame from the stream. Processes the audio frame using `process_audio`. If a pause is detected, it sets the event. If interruption is enabled and a reply is ongoing, it closes the current generator and clears the processing queue.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `frame` | `tuple[int, np.ndarray]` | A tuple containing the sample rate and the audio frame data. |
+
+______________________________________________________________________
+
+#### `emit`
+
+```python
+emit() -> EmitType | None
+
+```
+
+Produces the next output chunk from the reply generator (`fn`).
+
+This method is called repeatedly after a pause is detected (event is set). If the generator is not already running, it initializes it by calling `fn` with the accumulated audio and any required additional arguments. It then yields the next item from the generator. Handles both sync and async generators. Resets the state upon generator completion or error.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `EmitType | None` | The next output item from the generator, or None if no pause event has occurred or the generator is exhausted. |
+
+**Raises:**
+
+- **`Exception`**: Re-raises exceptions occurring within the `fn` generator.
+
+______________________________________________________________________
+
+#### `start_up`
+
+```python
+start_up()
+
+```
+
+Executes the startup function `startup_fn` if provided. Waits for additional arguments if needed before calling `startup_fn`.
+
+______________________________________________________________________
+
+#### `copy`
+
+```python
+copy() -> ReplyOnPause
+
+```
+
+Creates a new instance of ReplyOnPause with the same configuration.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `ReplyOnPause` | A new `ReplyOnPause` instance with identical settings. |
+
+______________________________________________________________________
+
+#### `determine_pause`
+
+```python
+determine_pause(audio: np.ndarray, sampling_rate: int, state: AppState) -> bool
+
+```
+
+Analyzes an audio chunk to detect if a significant pause occurred after speech.
+
+Uses the VAD model to measure speech duration within the chunk. Updates the application state (`state`) regarding whether talking has started and accumulates speech segments.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `audio` | `np.ndarray` | The numpy array containing the audio chunk. | | `sampling_rate` | `int` | The sample rate of the audio chunk. | | `state` | `AppState` | The current application state. |
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `bool` | True if a pause satisfying the configured thresholds is detected after speech has started, False otherwise. |
+
+______________________________________________________________________
+
+#### `process_audio`
+
+```python
+process_audio(audio: tuple[int, np.ndarray], state: AppState) -> None
+
+```
+
+Processes an incoming audio frame. Appends the frame to the buffer, runs pause detection on the buffer, and updates the application state.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `audio` | `tuple[int, np.ndarray]` | A tuple containing the sample rate and the audio frame data. | | `state` | `AppState` | The current application state to update. |
+
+______________________________________________________________________
+
+#### `reset`
+
+```python
+reset()
+
+```
+
+Resets the handler state to its initial condition. Clears accumulated audio, resets state flags, closes any active generator, and clears the event flag.
+
+______________________________________________________________________
+
+#### `trigger_response`
+
+```python
+trigger_response()
+
+```
+
+Manually triggers the response generation process. Sets the event flag, effectively simulating a pause detection. Initializes the stream buffer if it's empty.
+
+______________________________________________________________________
+
+## `ReplyOnStopWords` Class
+
+```python
+ReplyOnStopWords(
+    fn: ReplyFnGenerator,
+    stop_words: list[str],
+    startup_fn: Callable | None = None,
+    algo_options: AlgoOptions | None = None,
+    model_options: ModelOptions | None = None,
+    can_interrupt: bool = True,
+    expected_layout: Literal["mono", "stereo"] = "mono",
+    output_sample_rate: int = 24000,
+    output_frame_size: int | None = None,  # Deprecated
+    input_sample_rate: int = 48000,
+    model: PauseDetectionModel | None = None,
+)
+
+```
+
+A stream handler that extends `ReplyOnPause` to trigger based on stop words followed by a pause.
+
+This handler listens to the incoming audio stream, performs Speech-to-Text (STT) to detect predefined stop words. Once a stop word is detected, it waits for a subsequent pause in speech (using the VAD model) before triggering the reply function (`fn`) with the audio recorded *after* the stop word.
+
+### Methods
+
+#### `__init__`
+
+```python
+__init__(
+    fn: ReplyFnGenerator,
+    stop_words: list[str],
+    startup_fn: Callable | None = None,
+    algo_options: AlgoOptions | None = None,
+    model_options: ModelOptions | None = None,
+    can_interrupt: bool = True,
+    expected_layout: Literal["mono", "stereo"] = "mono",
+    output_sample_rate: int = 24000,
+    output_frame_size: int | None = None,  # Deprecated
+    input_sample_rate: int = 48000,
+    model: PauseDetectionModel | None = None,
+)
+
+```
+
+Initializes the ReplyOnStopWords handler.
+
+**Args:**
+
+*(Inherits Args from `ReplyOnPause.__init__`)*
+
+| Name | Type | Description | | --- | --- | --- | | `stop_words` | `list[str]` | A list of strings (words or phrases) to listen for. Detection is case-insensitive and ignores punctuation. |
+
+______________________________________________________________________
+
+#### `stop_word_detected`
+
+```python
+stop_word_detected(text: str) -> bool
+
+```
+
+Checks if any of the configured stop words are present in the text. Performs a case-insensitive search, treating multi-word stop phrases correctly and ignoring basic punctuation.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `text` | `str` | The text transcribed from the audio. |
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `bool` | True if a stop word is found, False otherwise. |
+
+______________________________________________________________________
+
+#### `send_stopword`
+
+```python
+send_stopword()
+
+```
+
+Sends a 'stopword' message asynchronously via the communication channel (if configured).
+
+______________________________________________________________________
+
+#### `determine_pause`
+
+```python
+determine_pause(audio: np.ndarray, sampling_rate: int, state: ReplyOnStopWordsState) -> bool
+
+```
+
+Analyzes an audio chunk to detect stop words and subsequent pauses. Overrides the `ReplyOnPause.determine_pause` method. First, it performs STT on the audio buffer to detect stop words. Once a stop word is detected (`state.stop_word_detected` is True), it then uses the VAD model to detect a pause in the audio *following* the stop word.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `audio` | `np.ndarray` | The numpy array containing the audio chunk. | | `sampling_rate` | `int` | The sample rate of the audio chunk. | | `state` | `ReplyOnStopWordsState` | The current application state (ReplyOnStopWordsState). |
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `bool` | True if a stop word has been detected and a subsequent pause satisfying the configured thresholds is detected, False otherwise. |
+
+______________________________________________________________________
+
+#### `reset`
+
+```python
+reset()
+
+```
+
+Resets the handler state to its initial condition. Clears accumulated audio, resets state flags (including stop word state), closes any active generator, and clears the event flag.
+
+______________________________________________________________________
+
+#### `copy`
+
+```python
+copy() -> ReplyOnStopWords
+
+```
+
+Creates a new instance of ReplyOnStopWords with the same configuration.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `ReplyOnStopWords` | A new `ReplyOnStopWords` instance with identical settings. |
+
+*(Inherits other public methods like `start_up`, `process_audio`, `receive`, `trigger_response`, `async_iterate`, `emit` from `ReplyOnPause`)*
+
+# `Stream` Class
+
+```python
+Stream(
+    handler: HandlerType,
+    *,
+    additional_outputs_handler: Callable | None = None,
+    mode: Literal["send-receive", "receive", "send"] = "send-receive",
+    modality: Literal["video", "audio", "audio-video"] = "video",
+    concurrency_limit: int | None | Literal["default"] = "default",
+    time_limit: float | None = None,
+    allow_extra_tracks: bool = False,
+    rtp_params: dict[str, Any] | None = None,
+    rtc_configuration: dict[str, Any] | None = None,
+    track_constraints: dict[str, Any] | None = None,
+    additional_inputs: list[Component] | None = None,
+    additional_outputs: list[Component] | None = None,
+    ui_args: UIArgs | None = None
+)
+
+```
+
+Define an audio or video stream with a built-in UI, mountable on a FastAPI app.
+
+This class encapsulates the logic for handling real-time communication (WebRTC) streams, including setting up peer connections, managing tracks, generating a Gradio user interface, and integrating with FastAPI for API endpoints. It supports different modes (send, receive, send-receive) and modalities (audio, video, audio-video), and can optionally handle additional Gradio input/output components alongside the stream. It also provides functionality for telephone integration via the FastPhone service.
+
+## Attributes
+
+| Name | Type | Description | | --- | --- | --- | | `mode` | `Literal["send-receive", "receive", "send"]` | The direction of the stream. | | `modality` | `Literal["video", "audio", "audio-video"]` | The type of media stream. | | `rtp_params` | `dict[str, Any] \| None` | Parameters for RTP encoding. | | `event_handler` | `HandlerType` | The main function to process stream data. | | `concurrency_limit` | `int` | The maximum number of concurrent connections allowed. | | `time_limit` | `float \| None` | Time limit in seconds for the event handler execution. | | `allow_extra_tracks` | `bool` | Whether to allow extra tracks beyond the specified modality. | | `additional_output_components` | `list[Component] \| None` | Extra Gradio output components. | | `additional_input_components` | `list[Component] \| None` | Extra Gradio input components. | | `additional_outputs_handler` | `Callable \| None` | Handler for additional outputs. | | `track_constraints` | `dict[str, Any] \| None` | Constraints for media tracks (e.g., resolution). | | `webrtc_component` | `WebRTC` | The underlying Gradio WebRTC component instance. | | `rtc_configuration` | `dict[str, Any] \| None \| Callable` | Configuration for the RTCPeerConnection (e.g., ICE servers). | | `server_rtc_configuration` | `dict[str, Any] \| None` | Configuration for the RTCPeerConnection (e.g., ICE servers) to be used in the server | | `_ui` | `Blocks` | The Gradio Blocks UI instance. |
+
+## Methods
+
+### `mount`
+
+```python
+mount(app: FastAPI, path: str = "")
+
+```
+
+Mount the stream's API endpoints onto a FastAPI application.
+
+This method adds the necessary routes (`/webrtc/offer`, `/telephone/handler`, `/telephone/incoming`, `/websocket/offer`) to the provided FastAPI app, prefixed with the optional `path`. It also injects a startup message into the app's lifespan.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `app` | `FastAPI` | The FastAPI application instance. | | `path` | `str` | An optional URL prefix for the mounted routes. |
+
+______________________________________________________________________
+
+### `fastphone`
+
+```python
+fastphone(
+    token: str | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    **kwargs
+)
+
+```
+
+Launch the FastPhone service for telephone integration.
+
+Starts a local FastAPI server, mounts the stream, creates a public tunnel (using Gradio's tunneling), registers the tunnel URL with the FastPhone backend service, and prints the assigned phone number and access code. This allows users to call the phone number and interact with the stream handler.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `token` | `str \| None` | Optional Hugging Face Hub token for authentication with the FastPhone service. If None, attempts to find one automatically. | | `host` | `str` | The local host address to bind the server to. | | `port` | `int` | The local port to bind the server to. | | `**kwargs` | | Additional keyword arguments passed to `uvicorn.run`. |
+
+**Raises:**
+
+- **`httpx.HTTPStatusError`**: If registration with the FastPhone service fails.
+- **`RuntimeError`**: If running in Colab/Spaces without `rtc_configuration`.
+
+### `offer`
+
+```python
+async offer(body: Body)
+
+```
+
+Handle an incoming WebRTC offer via HTTP POST.
+
+Processes the SDP offer and ICE candidates from the client to establish a WebRTC connection.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `body` | `Body` | A Pydantic model containing the SDP offer, optional ICE candidate, type ('offer'), and a unique WebRTC ID. |
+
+**Returns:**
+
+- A dictionary containing the SDP answer generated by the server.
+
+______________________________________________________________________
+
+### `handle_incoming_call`
+
+```python
+async handle_incoming_call(request: Request)
+
+```
+
+Handle incoming telephone calls (e.g., via Twilio).
+
+Generates TwiML instructions to connect the incoming call to the WebSocket handler (`/telephone/handler`) for audio streaming.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `request` | `Request` | The FastAPI Request object for the incoming call webhook. |
+
+**Returns:**
+
+- An `HTMLResponse` containing the TwiML instructions as XML.
+
+______________________________________________________________________
+
+### `telephone_handler`
+
+```python
+async telephone_handler(websocket: WebSocket)
+
+```
+
+The websocket endpoint for streaming audio over Twilio phone.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `websocket` | `WebSocket` | The incoming WebSocket connection object. |
+
+______________________________________________________________________
+
+### `websocket_offer`
+
+```python
+async websocket_offer(websocket: WebSocket)
+
+```
+
+Establish a Websocket connection to the Stream..
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `websocket` | `WebSocket` | The incoming WebSocket connection object. |
+
+## Properties
+
+### `ui`
+
+```python
+@property
+ui() -> Blocks
+
+```
+
+Get the Gradio Blocks UI instance associated with this stream.
+
+**Returns:**
+
+- The `gradio.Blocks` UI instance.
+
+```python
+@ui.setter
+ui(blocks: Blocks)
+
+```
+
+Set a custom Gradio Blocks UI for this stream.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `blocks` | `Blocks` | The `gradio.Blocks` instance to use as the UI. |
+
+# Stream Handlers
+
+These abstract base classes define the core interfaces for handling audio and video streams within FastRTC. Concrete handlers like `ReplyOnPause` inherit from these.
+
+## `StreamHandlerBase` Class
+
+```python
+StreamHandlerBase(
+    expected_layout: Literal["mono", "stereo"] = "mono",
+    output_sample_rate: int = 24000,
+    output_frame_size: int | None = None,  # Deprecated
+    input_sample_rate: int = 48000,
+)
+
+```
+
+Base class for handling media streams in FastRTC.
+
+Provides common attributes and methods for managing stream state, communication channels, and basic configuration. This class is intended to be subclassed by concrete stream handlers like `StreamHandler` or `AsyncStreamHandler`.
+
+### Attributes
+
+| Name | Type | Description | | --- | --- | --- | | `expected_layout` | `Literal["mono", "stereo"]` | The expected channel layout of the input audio ('mono' or 'stereo'). | | `output_sample_rate` | `int` | The target sample rate for the output audio. | | `output_frame_size` | `int` | The desired number of samples per output audio frame. | | `input_sample_rate` | `int` | The expected sample rate of the input audio. | | `channel` | `DataChannel \| None` | The WebRTC data channel for communication. | | `channel_set` | `asyncio.Event` | Event indicating if the data channel is set. | | `args_set` | `asyncio.Event` | Event indicating if additional arguments are set. | | `latest_args` | `str \| list[Any]` | Stores the latest arguments received. | | `loop` | `asyncio.AbstractEventLoop` | The asyncio event loop. | | `phone_mode` | `bool` | Flag indicating if operating in telephone mode. |
+
+### Methods
+
+#### `__init__`
+
+```python
+__init__(
+    expected_layout: Literal["mono", "stereo"] = "mono",
+    output_sample_rate: int = 24000,
+    output_frame_size: int | None = None,  # Deprecated
+    input_sample_rate: int = 48000,
+)
+
+```
+
+Initializes the StreamHandlerBase.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `expected_layout` | `Literal["mono", "stereo"]` | Expected input audio layout ('mono' or 'stereo'). | | `output_sample_rate` | `int` | Target output audio sample rate. | | `output_frame_size` | `int \| None` | Deprecated. Frame size is now derived from sample rate. | | `input_sample_rate` | `int` | Expected input audio sample rate. |
+
+______________________________________________________________________
+
+#### `clear_queue`
+
+```python
+clear_queue()
+
+```
+
+Clears the internal processing queue via the registered callback.
+
+______________________________________________________________________
+
+#### `send_message`
+
+```python
+async send_message(msg: str)
+
+```
+
+Asynchronously sends a message over the data channel.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `msg` | `str` | The string message to send. |
+
+______________________________________________________________________
+
+#### `send_message_sync`
+
+```python
+send_message_sync(msg: str)
+
+```
+
+Synchronously sends a message over the data channel. Runs the async `send_message` in the event loop and waits for completion.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `msg` | `str` | The string message to send. |
+
+______________________________________________________________________
+
+#### `reset`
+
+```python
+reset()
+
+```
+
+Resets the argument set event.
+
+______________________________________________________________________
+
+#### `shutdown`
+
+```python
+shutdown()
+
+```
+
+Placeholder for shutdown logic. Subclasses can override.
+
+______________________________________________________________________
+
+## `StreamHandler` Class
+
+```python
+StreamHandler(
+    expected_layout: Literal["mono", "stereo"] = "mono",
+    output_sample_rate: int = 24000,
+    output_frame_size: int | None = None,  # Deprecated
+    input_sample_rate: int = 48000,
+)
+
+```
+
+Abstract base class for synchronous stream handlers.
+
+Inherits from `StreamHandlerBase` and defines the core synchronous interface for processing audio streams. Subclasses must implement `receive`, `emit`, and `copy`.
+
+*(Inherits Attributes and Methods from `StreamHandlerBase`)*
+
+### Abstract Methods
+
+#### `receive`
+
+```python
+@abstractmethod
+receive(frame: tuple[int, npt.NDArray[np.int16]]) -> None
+
+```
+
+Process an incoming audio frame synchronously.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `frame` | `tuple[int, npt.NDArray[np.int16]]` | A tuple containing the sample rate (int) and the audio data as a numpy array (int16). |
+
+______________________________________________________________________
+
+#### `emit`
+
+```python
+@abstractmethod
+emit() -> EmitType
+
+```
+
+Produce the next output chunk synchronously. This method is called repeatedly to generate the output to be sent back over the stream.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `EmitType` | An output item conforming to `EmitType`, which could be audio data, additional outputs, control signals (like `CloseStream`), or None. |
+
+______________________________________________________________________
+
+#### `copy`
+
+```python
+@abstractmethod
+copy() -> StreamHandler
+
+```
+
+Create a copy of this synchronous stream handler instance. Used to create a new handler for each connection.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `StreamHandler` | A new instance of the concrete StreamHandler subclass. |
+
+______________________________________________________________________
+
+#### `start_up`
+
+```python
+start_up()
+
+```
+
+Optional synchronous startup logic.
+
+______________________________________________________________________
+
+## `AsyncStreamHandler` Class
+
+```python
+AsyncStreamHandler(
+    expected_layout: Literal["mono", "stereo"] = "mono",
+    output_sample_rate: int = 24000,
+    output_frame_size: int | None = None,  # Deprecated
+    input_sample_rate: int = 48000,
+)
+
+```
+
+Abstract base class for asynchronous stream handlers.
+
+Inherits from `StreamHandlerBase` and defines the core asynchronous interface using coroutines (`async def`) for processing audio streams. Subclasses must implement `receive`, `emit`, and `copy`. The `start_up` method must also be a coroutine.
+
+*(Inherits Attributes and Methods from `StreamHandlerBase`)*
+
+### Abstract Methods
+
+#### `receive`
+
+```python
+@abstractmethod
+async receive(frame: tuple[int, npt.NDArray[np.int16]]) -> None
+
+```
+
+Process an incoming audio frame asynchronously.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `frame` | `tuple[int, npt.NDArray[np.int16]]` | A tuple containing the sample rate (int) and the audio data as a numpy array (int16). |
+
+______________________________________________________________________
+
+#### `emit`
+
+```python
+@abstractmethod
+async emit() -> EmitType
+
+```
+
+Produce the next output chunk asynchronously. This coroutine is called to generate the output to be sent back over the stream.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `EmitType` | An output item conforming to `EmitType`, which could be audio data, additional outputs, control signals (like `CloseStream`), or None. |
+
+______________________________________________________________________
+
+#### `copy`
+
+```python
+@abstractmethod
+copy() -> AsyncStreamHandler
+
+```
+
+Create a copy of this asynchronous stream handler instance. Used to create a new handler for each connection.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `AsyncStreamHandler` | A new instance of the concrete AsyncStreamHandler subclass. |
+
+______________________________________________________________________
+
+#### `start_up`
+
+```python
+async start_up()
+
+```
+
+Optional asynchronous startup logic. Must be a coroutine (`async def`).
+
+______________________________________________________________________
+
+## `AudioVideoStreamHandler` Class
+
+```python
+AudioVideoStreamHandler(
+    expected_layout: Literal["mono", "stereo"] = "mono",
+    output_sample_rate: int = 24000,
+    output_frame_size: int | None = None,  # Deprecated
+    input_sample_rate: int = 48000,
+)
+
+```
+
+Abstract base class for synchronous handlers processing both audio and video.
+
+Inherits from `StreamHandler` (synchronous audio) and adds abstract methods for handling video frames synchronously. Subclasses must implement the audio methods (`receive`, `emit`) and the video methods (`video_receive`, `video_emit`), as well as `copy`.
+
+*(Inherits Attributes and Methods from `StreamHandler`)*
+
+### Abstract Methods
+
+#### `video_receive`
+
+```python
+@abstractmethod
+video_receive(frame: VideoFrame) -> None
+
+```
+
+Process an incoming video frame synchronously.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `frame` | `VideoFrame` | The incoming aiortc `VideoFrame`. |
+
+______________________________________________________________________
+
+#### `video_emit`
+
+```python
+@abstractmethod
+video_emit() -> VideoEmitType
+
+```
+
+Produce the next output video frame synchronously.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `VideoEmitType` | An output item conforming to `VideoEmitType`, typically a numpy array representing the video frame, or None. |
+
+______________________________________________________________________
+
+#### `copy`
+
+```python
+@abstractmethod
+copy() -> AudioVideoStreamHandler
+
+```
+
+Create a copy of this audio-video stream handler instance.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `AudioVideoStreamHandler` | A new instance of the concrete AudioVideoStreamHandler subclass. |
+
+______________________________________________________________________
+
+## `AsyncAudioVideoStreamHandler` Class
+
+```python
+AsyncAudioVideoStreamHandler(
+    expected_layout: Literal["mono", "stereo"] = "mono",
+    output_sample_rate: int = 24000,
+    output_frame_size: int | None = None,  # Deprecated
+    input_sample_rate: int = 48000,
+)
+
+```
+
+Abstract base class for asynchronous handlers processing both audio and video.
+
+Inherits from `AsyncStreamHandler` (asynchronous audio) and adds abstract coroutines for handling video frames asynchronously. Subclasses must implement the async audio methods (`receive`, `emit`, `start_up`) and the async video methods (`video_receive`, `video_emit`), as well as `copy`.
+
+*(Inherits Attributes and Methods from `AsyncStreamHandler`)*
+
+### Abstract Methods
+
+#### `video_receive`
+
+```python
+@abstractmethod
+async video_receive(frame: npt.NDArray[np.float32]) -> None
+
+```
+
+Process an incoming video frame asynchronously.
+
+**Args:**
+
+| Name | Type | Description | | --- | --- | --- | | `frame` | `npt.NDArray[np.float32]` | The video frame data as a numpy array (float32). Note: The type hint differs from the synchronous version. |
+
+______________________________________________________________________
+
+#### `video_emit`
+
+```python
+@abstractmethod
+async video_emit() -> VideoEmitType
+
+```
+
+Produce the next output video frame asynchronously.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `VideoEmitType` | An output item conforming to `VideoEmitType`, typically a numpy array representing the video frame, or None. |
+
+______________________________________________________________________
+
+#### `copy`
+
+```python
+@abstractmethod
+copy() -> AsyncAudioVideoStreamHandler
+
+```
+
+Create a copy of this asynchronous audio-video stream handler instance.
+
+**Returns:**
+
+| Type | Description | | --- | --- | | `AsyncAudioVideoStreamHandler` | A new instance of the concrete AsyncAudioVideoStreamHandler subclass. |
+
+# Utils
+
+## `audio_to_bytes`
+
+Convert an audio tuple containing sample rate and numpy array data into bytes. Useful for sending data to external APIs from `ReplyOnPause` handler.
+
+Parameters
+
+```text
+audio : tuple[int, np.ndarray]
+    A tuple containing:
+        - sample_rate (int): The audio sample rate in Hz
+        - data (np.ndarray): The audio data as a numpy array
+
+```
+
+Returns
+
+```text
+bytes
+    The audio data encoded as bytes, suitable for transmission or storage
+
+```
+
+Example
+
+```python
+>>> sample_rate = 44100
+>>> audio_data = np.array([0.1, -0.2, 0.3])  # Example audio samples
+>>> audio_tuple = (sample_rate, audio_data)
+>>> audio_bytes = audio_to_bytes(audio_tuple)
+
+```
+
+## `audio_to_file`
+
+Save an audio tuple containing sample rate and numpy array data to a file.
+
+Parameters
+
+```text
+audio : tuple[int, np.ndarray]
+    A tuple containing:
+        - sample_rate (int): The audio sample rate in Hz
+        - data (np.ndarray): The audio data as a numpy array
+
+```
+
+Returns
+
+```text
+str
+    The path to the saved audio file
+
+```
+
+Example
+
+````text
+```python
+>>> sample_rate = 44100
+>>> audio_data = np.array([0.1, -0.2, 0.3])  # Example audio samples
+>>> audio_tuple = (sample_rate, audio_data)
+>>> file_path = audio_to_file(audio_tuple)
+>>> print(f"Audio saved to: {file_path}")
+
+````
+
+## `aggregate_bytes_to_16bit`
+
+Aggregate bytes to 16-bit audio samples.
+
+This function takes an iterator of chunks and aggregates them into 16-bit audio samples. It handles incomplete samples and combines them with the next chunk.
+
+Parameters
+
+```text
+chunks_iterator : Iterator[bytes]
+    An iterator of byte chunks to aggregate
+
+```
+
+Returns
+
+```text
+Iterator[NDArray[np.int16]]
+    An iterator of 16-bit audio samples
+
+```
+
+Example
+
+```python
+>>> chunks_iterator = [b'\x00\x01', b'\x02\x03', b'\x04\x05']
+>>> for chunk in aggregate_bytes_to_16bit(chunks_iterator):
+>>>     print(chunk)
+
+```
+
+## `async_aggregate_bytes_to_16bit`
+
+Aggregate bytes to 16-bit audio samples asynchronously.
+
+Parameters
+
+```text
+chunks_iterator : Iterator[bytes]
+    An iterator of byte chunks to aggregate
+
+```
+
+Returns
+
+```text
+Iterator[NDArray[np.int16]]
+    An iterator of 16-bit audio samples
+
+```
+
+Example
+
+```python
+>>> chunks_iterator = [b'\x00\x01', b'\x02\x03', b'\x04\x05']
+>>> for chunk in async_aggregate_bytes_to_16bit(chunks_iterator):
+>>>     print(chunk)
+
+```
+
+## `wait_for_item`
+
+Wait for an item from an asyncio.Queue with a timeout.
+
+Parameters
+
+```text
+queue : asyncio.Queue
+    The queue to wait for an item from
+timeout : float
+    The timeout in seconds
+
+```
+
+Returns
+
+```text
+Any
+    The item from the queue or None if the timeout is reached
+
+```
+
+Example
+
+```python
+>>> queue = asyncio.Queue()
+>>> queue.put_nowait(1)
+>>> item = await wait_for_item(queue)
+>>> print(item)
+
+```
